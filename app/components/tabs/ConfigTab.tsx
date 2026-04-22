@@ -15,7 +15,7 @@ interface ConfigTabProps {
 /* ─── Profit Score — combines rarity value, flip potential, and demand ─── */
 function profitScore(r: Recommendation): number {
   if (!r) return 0;
-  const rarityBonus = 10 - (getRarityWeight(r.rarity));  // OG=10, Common=1
+  const rarityBonus = 10 - (getRarityWeight(r.rarity));  // OG=10, Brainrot God=9, Common=0
   const flip = r.flipScore ?? 0;
   const farm = r.farmScore ?? 0;
   const demand = r.soldCount > 0 ? Math.min(5, Math.log2(r.soldCount + 1)) : 0;
@@ -117,7 +117,7 @@ const STRATEGIES: Record<string, {
 
 function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [activeStrategy, setActiveStrategy] = useState<string>('allstar');
-  const [minPrice, setMinPrice] = useState('0');
+  const [minPrice, setMinPrice] = useState('0.50');
   const [maxPrice, setMaxPrice] = useState('99999');
   const [minListings, setMinListings] = useState('1');
   const [maxItems, setMaxItems] = useState('50');
@@ -352,11 +352,11 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           <div className="filter-panel-body flex-col gap-3">
             <div className="grid-filters">
               <div>
-                <label className="config-label">Min Price ($)</label>
+                <label className="config-label">Min Median ($)</label>
                 <input className="input" type="number" value={minPrice} onChange={e => setMinPrice(Math.max(0, parseFloat(e.target.value) || 0).toString())} placeholder="0" min="0" />
               </div>
               <div>
-                <label className="config-label">Max Price ($)</label>
+                <label className="config-label">Max Median ($)</label>
                 <input className="input" type="number" value={maxPrice} onChange={e => setMaxPrice(Math.max(0, parseFloat(e.target.value) || 99999).toString())} placeholder="99999" min="0" />
               </div>
               <div>

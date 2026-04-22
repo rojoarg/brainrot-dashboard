@@ -37,11 +37,11 @@ export const MUTATION_COLORS: Record<string, string> = {
   'Rainbow': '#ff4081', 'Divine': '#ffd740', 'Cyber': '#00e5ff',
 };
 
-// Lower = higher priority. OG/Brainrot God are the most valuable.
+// Lower = higher priority. OG is always #1, Brainrot God is #2.
 export const RARITY_WEIGHT: Record<string, number> = {
-  'OG': 0, 'Brainrot God': 0, Admin: 1, Secret: 2, Mythical: 3,
-  Legendary: 4, Taco: 5, Valentines: 5, Festive: 5,
-  Epic: 6, Rare: 7, Uncommon: 8, Common: 9,
+  'OG': 0, 'Brainrot God': 1, Admin: 2, Secret: 3, Mythical: 4,
+  Legendary: 5, Taco: 6, Valentines: 6, Festive: 6,
+  Epic: 7, Rare: 8, Uncommon: 9, Common: 10,
 };
 
 // Rarity score bonus for recommendation engine (added to base score)
