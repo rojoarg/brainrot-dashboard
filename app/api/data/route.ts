@@ -526,6 +526,7 @@ export async function GET(request: Request) {
         trendingCount: r.trending_count,
         avgPrice: r.avg_price,
         recordCount: r.record_count,
+        marketplaceTotal: r.marketplace_total || 0,
       })),
     },
     brainrots,

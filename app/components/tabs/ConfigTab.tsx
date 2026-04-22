@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { Config, DashData, MutationAdvisory, Recommendation, BrainrotCombo, WLItem } from '../../lib/types';
-import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, masterSort } from '../../lib/utils';
+import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, masterSort, computePriority } from '../../lib/utils';
 import { StatCard, TierBadge, RarityBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -30,6 +30,10 @@ const STRATEGIES: Record<string, {
   label: string; desc: string; icon: string; color: string; gradient: string;
   sort: (a: Recommendation, b: Recommendation) => number;
   diversified?: boolean;
+  /** When true, strategy sort is primary — masterSort (rarity-first) is NOT applied */
+  bypassMasterSort?: boolean;
+  /** When set, auto-filters items to this max median price */
+  autoMaxPrice?: number;
   filterHint?: string;
 }> = {
   allstar: {
@@ -39,22 +43,28 @@ const STRATEGIES: Record<string, {
   },
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand, easy resell', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
+    bypassMasterSort: true,
     sort: (a: Recommendation, b: Recommendation) => {
-      // Farmers want: proven sold history + enough supply to buy consistently + not too expensive
-      // Key difference: farmScore heavily weighted, price tier bonus (under $20 or $50)
-      const aScore = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
-      const bScore = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0);
+      // Farmers want: proven sold history + enough supply + not too expensive
+      // farmScore heavily weighted, price tier bonus, rarity as minor tiebreaker only
+      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.5;
+      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.5;
+      const aScore = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0) + rarityA;
+      const bScore = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0) + rarityB;
       return bScore - aScore;
     },
     filterHint: 'Focus on proven sellers with volume',
   },
   flipper: {
     label: 'Flipper', desc: 'Buy low sell high — max spread & ROI', icon: '\uD83D\uDCB0', color: '#45d0ff', gradient: 'linear-gradient(135deg, #45d0ff22, #0099cc22)',
+    bypassMasterSort: true,
     sort: (a: Recommendation, b: Recommendation) => {
-      // Flippers want: big price spread + proven ability to sell at higher price + enough liquidity
-      // Key difference: flipScore & spreadScore heavily weighted, ROI bonus
-      const aScore = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0);
-      const bScore = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0);
+      // Flippers want: big price spread + proven ability to sell higher + liquidity
+      // flipScore & spreadScore primary, rarity as minor tiebreaker only
+      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.3;
+      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.3;
+      const aScore = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0) + rarityA;
+      const bScore = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0) + rarityB;
       return bScore - aScore;
     },
     filterHint: 'Look for underpriced listings to flip',
@@ -87,9 +97,9 @@ const STRATEGIES: Record<string, {
   },
   trending: {
     label: 'Trending', desc: 'Hot items trending now — ride the wave', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
+    bypassMasterSort: true,
     sort: (a: Recommendation, b: Recommendation) => {
-      // Trendiers want: items with high trending listings count + recent momentum
-      // Key difference: trendingListings is primary signal, momentum bonus
+      // Trending: trendingListings is primary signal — rarity irrelevant, what's hot is hot
       const aScore = (a.trendingListings || 0) * 5 + (a.soldCount || 0) * 2 + (a.score ?? 0) * 0.3;
       const bScore = (b.trendingListings || 0) * 5 + (b.soldCount || 0) * 2 + (b.score ?? 0) * 0.3;
       return bScore - aScore;
@@ -98,14 +108,18 @@ const STRATEGIES: Record<string, {
   },
   budget: {
     label: 'Budget', desc: 'Max value under $5 — high ROI for small capital', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
+    bypassMasterSort: true,
+    autoMaxPrice: 5,
     sort: (a: Recommendation, b: Recommendation) => {
-      // Budget: best score-to-price ratio, prefer items that actually sell
-      // Key difference: value efficiency (score/price) is primary, low cost focus
-      const aVal = (a.med ?? 0) > 0 ? ((a.score ?? 0) / (a.med ?? 1)) * ((a.soldCount ?? 0) > 0 ? 2 : 1) : 0;
-      const bVal = (b.med ?? 0) > 0 ? ((b.score ?? 0) / (b.med ?? 1)) * ((b.soldCount ?? 0) > 0 ? 2 : 1) : 0;
+      // Budget: value efficiency (score/price) is primary, rarity irrelevant
+      // Guard against zero/negative prices
+      const aPrice = Math.max(a.med ?? 0, 0.01);
+      const bPrice = Math.max(b.med ?? 0, 0.01);
+      const aVal = ((a.score ?? 0) / aPrice) * ((a.soldCount ?? 0) > 0 ? 2 : 1);
+      const bVal = ((b.score ?? 0) / bPrice) * ((b.soldCount ?? 0) > 0 ? 2 : 1);
       return bVal - aVal;
     },
-    filterHint: 'Filters to items under $5',
+    filterHint: 'Auto-filters to items under $5',
   },
   diversified: {
     label: 'Diversified', desc: 'Balanced portfolio across all rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
@@ -135,11 +149,14 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return Array.from(set).sort();
   }, [data]);
 
-  /* Global filter applied to ALL strategies */
+  /* Global filter applied to ALL strategies — also applies autoMaxPrice from strategy */
   const filtered = useMemo(() => {
     if (!data?.recommendations) return [];
+    const strat = STRATEGIES[activeStrategy];
     const lo = parseFloat(minPrice) || 0;
-    const hi = parseFloat(maxPrice) || 999999;
+    // Strategy autoMaxPrice caps the user's maxPrice (e.g. Budget auto-caps at $5)
+    const userHi = parseFloat(maxPrice) || 999999;
+    const hi = strat?.autoMaxPrice ? Math.min(userHi, strat.autoMaxPrice) : userHi;
     const ml = parseInt(minListings) || 1;
     const bl = new Set(config.blacklisted.map((n: string) => n.toLowerCase()));
     return data.recommendations.filter((r: Recommendation) =>
@@ -149,16 +166,20 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       !excludedRarities.has(r.rarity) &&
       !bl.has(r.name.toLowerCase())
     );
-  }, [data, minPrice, maxPrice, minListings, rarity, excludedRarities, config.blacklisted]);
+  }, [data, minPrice, maxPrice, minListings, rarity, excludedRarities, config.blacklisted, activeStrategy]);
 
-  /* Apply masterSort (rarity → sold → strategy) for ALL strategies */
+  /* Apply sorting — masterSort (rarity→sold→strategy) for rarity-first strategies,
+     or pure strategy sort for bypassMasterSort strategies */
   const results = useMemo(() => {
     const strat = STRATEGIES[activeStrategy];
     const stratSort = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
     const maxN = parseInt(maxItems) || 50;
+    const sortFn = strat?.bypassMasterSort
+      ? stratSort
+      : (a: Recommendation, b: Recommendation) => masterSort(a, b, stratSort);
 
     if (strat?.diversified) {
-      // Diversified: take top N from each rarity, then masterSort across all tiers
+      // Diversified: weighted allocation — rarer tiers get proportionally more slots
       const byRarity: Record<string, Recommendation[]> = {};
       for (const r of filtered) {
         if (!byRarity[r.rarity]) byRarity[r.rarity] = [];
@@ -166,25 +187,36 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       }
       const result: Recommendation[] = [];
       const rarities = Object.keys(byRarity).sort((a, b) => getRarityWeight(a) - getRarityWeight(b));
-      const perRarity = Math.max(3, Math.ceil(maxN / rarities.length));
+
+      // Weight allocation: rarer tiers (lower weight) get more slots
+      // OG(w=0)→11pts, BrainrotGod(w=1)→10pts, ..., Common(w=10)→1pt
+      const totalWeight = rarities.reduce((sum, r) => sum + (11 - getRarityWeight(r)), 0);
       for (const rar of rarities) {
+        const weight = 11 - getRarityWeight(rar);
+        const slots = Math.max(2, Math.round((weight / Math.max(totalWeight, 1)) * maxN));
         byRarity[rar].sort((a, b) => masterSort(a, b, stratSort));
-        result.push(...byRarity[rar].slice(0, perRarity));
+        result.push(...byRarity[rar].slice(0, slots));
       }
-      // Final sort: apply masterSort across all rarities to ensure premium items surface
-      return result.sort((a, b) => masterSort(a, b, stratSort)).slice(0, maxN);
+      // Dedupe (in case of overlap) and final sort
+      const seen = new Set<string>();
+      const deduped = result.filter(r => {
+        if (seen.has(r.name)) return false;
+        seen.add(r.name);
+        return true;
+      });
+      return deduped.sort((a, b) => masterSort(a, b, stratSort)).slice(0, maxN);
     }
 
-    return [...filtered].sort((a, b) => masterSort(a, b, stratSort)).slice(0, maxN);
+    return [...filtered].sort(sortFn).slice(0, maxN);
   }, [filtered, activeStrategy, maxItems]);
 
   /* Build config from results and immediately download */
   const generateAndDownload = () => {
-    const wl: WLItem[] = results.map((r: Recommendation, i: number) => {
+    const wl: WLItem[] = results.map((r: Recommendation) => {
       if (!r?.name) return null as any;
       const item: WLItem = {
         pet_name: r.name,
-        priority: i,
+        priority: computePriority(r),
         min_value: smartMinValue(r),
       };
       // Compute mutation overrides for this pet
@@ -311,8 +343,70 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return count;
   }, [advisoryMap]);
 
+  // Validation summary — explains what the config generator did and why
+  const configSummary = useMemo(() => {
+    if (results.length === 0) return null;
+    const rarityGroups: Record<string, number> = {};
+    let noSoldData = 0;
+    let noListings = 0;
+    let premiumAutoIncluded = 0;
+    const premiumRarities = new Set(['OG', 'Admin', 'Brainrot God']);
+
+    for (const r of results) {
+      const rar = r.rarity || 'Unknown';
+      rarityGroups[rar] = (rarityGroups[rar] || 0) + 1;
+      if ((r.soldCount ?? 0) === 0) noSoldData++;
+      if ((r.listings ?? 0) === 0) noListings++;
+      if (premiumRarities.has(rar)) premiumAutoIncluded++;
+    }
+
+    const sortedRarities = Object.entries(rarityGroups)
+      .sort(([a], [b]) => getRarityWeight(a) - getRarityWeight(b));
+
+    const hints: string[] = [];
+    if (premiumAutoIncluded > 0) hints.push(`${premiumAutoIncluded} premium rarity items (always worth sniping)`);
+    if (noSoldData > 0) hints.push(`${noSoldData} items with no sold history (priority based on rarity + listings)`);
+    if (noListings > 0) hints.push(`${noListings} items with no active listings (may be delisted)`);
+    if (strat?.autoMaxPrice) hints.push(`Auto-filtered to items under $${strat.autoMaxPrice}`);
+    if (strat?.bypassMasterSort) hints.push('Sorted by strategy score (rarity is a minor factor)');
+    else hints.push('Sorted by rarity first, then strategy score within each tier');
+
+    return { sortedRarities, hints };
+  }, [results, strat]);
+
+  // Data quality check — warn if dataset looks incomplete
+  const dataQuality = useMemo(() => {
+    if (!data?.meta) return null;
+    const total = data.meta.totalListings || 0;
+    const unique = data.meta.uniqueBrainrots || 0;
+    const combos = data.meta.uniqueCombos || 0;
+    // Use real marketplace total from latest completed scrape run, fallback to 65k estimate
+    const runs = data.meta.scrapeRuns || [];
+    const lastCompleted = runs.find((r: any) => r.status === 'completed' && r.marketplaceTotal > 0);
+    const marketSize = lastCompleted?.marketplaceTotal || 65000;
+    const coverage = total > 0 && marketSize > 0 ? Math.round((total / marketSize) * 100) : 0;
+    const isLow = coverage < 80;
+    return { total, unique, combos, coverage, isLow, marketSize };
+  }, [data]);
+
   return (
     <div className="d-flex flex-col gap-4">
+
+      {/* ──── Data quality warning ──── */}
+      {dataQuality?.isLow && (
+        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+          <div className="d-flex items-center gap-2">
+            <span className="text-lg">{'\u26A0\uFE0F'}</span>
+            <div>
+              <div className="text-sm fw-600" style={{ color: '#f59e0b' }}>Limited Data Coverage ({dataQuality.coverage}%)</div>
+              <div className="text-xs text-muted">
+                {dataQuality.total.toLocaleString()} of ~{(dataQuality.marketSize / 1000).toFixed(0)}k listings scraped ({dataQuality.unique} unique pets, {dataQuality.combos} combos).
+                Min prices and recommendations may be inaccurate. Run a fresh scrape for complete data.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ──── Step 1: Pick Strategy (primary action) ──── */}
       <div>
@@ -508,6 +602,25 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           </div>
         )}
       </div>
+
+      {/* ──── Config Summary — why these items were picked ──── */}
+      {configSummary && results.length > 0 && (
+        <div className="config-summary" style={{ padding: '12px 16px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <div className="text-sm fw-600 text-sub mb-2">Config Breakdown</div>
+          <div className="d-flex flex-wrap gap-2 mb-2">
+            {configSummary.sortedRarities.map(([rar, count]) => (
+              <span key={rar} className="pill" style={{ fontSize: '0.75rem' }}>
+                {rar}: {count}
+              </span>
+            ))}
+          </div>
+          <div className="d-flex flex-col gap-1">
+            {configSummary.hints.map((hint, i) => (
+              <div key={i} className="text-xs text-muted">{'\u2022'} {hint}</div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ──── Generated config info ──── */}
       {generated && (

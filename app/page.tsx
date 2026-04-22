@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { TabErrorBoundary } from './components/ErrorBoundary';
 import type { DashData, Config, TabId } from './lib/types';
 import { TABS } from './lib/constants';
-import { timeAgo, downloadConfigJSON, exportData, smartMinValue, getMutationAdvisory } from './lib/utils';
+import { timeAgo, downloadConfigJSON, exportData, smartMinValue, getMutationAdvisory, computePriority } from './lib/utils';
 import { useData } from './lib/useData';
 
 /* ─── Lazy-loaded tab components ─── */
@@ -136,7 +136,7 @@ export default function Dashboard() {
     const b = data?.brainrots?.[name];
     const newItem: { pet_name: string; priority: number; min_value: number; mutations?: Record<string, number> } = {
       pet_name: name,
-      priority: rec ? Math.round(100 - rec.score) : 50,
+      priority: computePriority(rec || b as any),
       min_value: smartMinValue(rec || b),
     };
     if (rec) {

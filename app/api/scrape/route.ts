@@ -8,9 +8,9 @@ const IMAGE_BASE = 'https://images.eldorado.gg/';
 const CONCURRENT = 5;              // 5 concurrent fetches to avoid rate-limiting
 const PAGES_PER_CHUNK = 20;        // 20 pages per chunk â 10s â safe even when Eldorado API is slow
 const CHUNKS_PER_CALL = 1;         // 1 chunk per call
-const MAX_PAGES = 1050;            // Eldorado has ~1000 active pages as of Apr 2026
-const TOTAL_CHUNKS = Math.ceil(MAX_PAGES / PAGES_PER_CHUNK); // 53 chunks
-const TOTAL_CALLS = Math.ceil(TOTAL_CHUNKS / CHUNKS_PER_CALL); // 53 batch calls â 55 hops total
+const MAX_PAGES = 1400;            // Eldorado has ~65k listings (1310+ pages x 50/page). 1400 = headroom.
+const TOTAL_CHUNKS = Math.ceil(MAX_PAGES / PAGES_PER_CHUNK); // 70 chunks
+const TOTAL_CALLS = Math.ceil(TOTAL_CHUNKS / CHUNKS_PER_CALL); // 70 batch calls â 72 hops total
 const MIN_LISTINGS_FOR_SWAP = 10000;
 
 interface Listing {
@@ -333,7 +333,7 @@ async function scrapeSegment(chunkNum: number) {
         consecutiveEmpty = 0; // Errors don't count as "end"
       } else if (r.length === 0) {
         consecutiveEmpty++;
-        if (consecutiveEmpty >= 3) { reachedEnd = true; break; }
+        if (consecutiveEmpty >= 5) { reachedEnd = true; break; }
       } else {
         consecutiveEmpty = 0;
         allListings.push(...r);
@@ -520,6 +520,19 @@ async function finalizeScrape() {
     console.error('Price snapshot generation failed:', snapErr.message);
   }
 
+  // Fetch Eldorado's actual listing count for coverage tracking
+  let eldoradoTotal = 0;
+  try {
+    const countRes = await fetch(ELDORADO_API + '1', {
+      headers: { 'User-Agent': 'BrainrotDashboard/3.0' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (countRes.ok) {
+      const countData = await countRes.json();
+      eldoradoTotal = countData.recordCount || countData.totalPages || 0;
+    }
+  } catch { /* non-critical */ }
+
   // NOW mark run as completed (after snapshots)
   if (runningRun) {
     await supabase.from('brainrot_scrape_runs').update({
@@ -530,6 +543,7 @@ async function finalizeScrape() {
       status: 'completed',
       staging_count: swapResult.staging_count,
       delisted_count: swapResult.delisted,
+      marketplace_total: eldoradoTotal,
     }).eq('id', runningRun.id);
   }
 

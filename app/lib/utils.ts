@@ -5,6 +5,32 @@ import { RARITY_ORDER, RARITY_WEIGHT, MUTATION_MULTIPLIERS } from './constants';
 export const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
 
 /**
+ * Unified priority calculator — used by BOTH ConfigTab and page.tsx addToWL.
+ * Lower number = higher priority (0 is first).
+ *
+ * Formula: rarity weight provides the primary tier (0-10), then strategy score
+ * and market data refine within that tier. Items with the same rarity are
+ * differentiated by their score/sold data.
+ *
+ * Output range: 0–100 (clamped). OG items with high scores → ~0, Common items
+ * with low scores → ~100.
+ */
+export function computePriority(rec: { rarity?: string; score?: number; soldCount?: number; med?: number } | null | undefined): number {
+  if (!rec) return 50;
+  const rarityW = getRarityWeight(rec.rarity || '');
+  // Rarity contributes 0-70 (weight 0-10 * 7)
+  const rarityComponent = rarityW * 7;
+  // Score contributes 0-20 (inverted: higher score = lower priority number)
+  const score = rec.score ?? 0;
+  const scoreComponent = Math.max(0, 20 - Math.min(20, score * 0.2));
+  // Sold count contributes 0-10 (more sold = lower priority number = higher priority)
+  const sold = rec.soldCount ?? 0;
+  const soldComponent = Math.max(0, 10 - Math.min(10, Math.log2(sold + 1) * 2));
+  const priority = Math.round(rarityComponent + scoreComponent + soldComponent);
+  return Math.max(0, Math.min(100, priority));
+}
+
+/**
  * Master sort: rarity tier → sold count → strategy-specific sort.
  * OGs/Secrets/premium rarities always float to the top across ALL strategies.
  */
@@ -131,8 +157,11 @@ export function getMutationAdvisory(rec: Recommendation): MutationAdvisory[] {
     const priceRatio = baseMed > 0 ? avgMed / baseMed : 1;
     if (!isFinite(priceRatio) || isNaN(priceRatio)) continue;
     const multiplier = MUTATION_MULTIPLIERS[mut] || 0;
-    const safePriceRatio = Math.max(1, Math.min(priceRatio, 20));
-    const recommendedOverride = Math.max(Math.round(avgMed * safePriceRatio * 10000), 1000000);
+
+    // Use smartMinValue-style tiered conversion for the mutation's USD price.
+    // This ensures mutation overrides use the same USD→gems logic as base items.
+    // We create a synthetic rec with the mutation's median price to get accurate gems.
+    const recommendedOverride = smartMinValue({ med: avgMed, rarity: rec.rarity });
 
     advisories.push({
       mutation: mut,
