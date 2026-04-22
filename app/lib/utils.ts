@@ -8,38 +8,49 @@ export const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
  * Unified priority calculator — used by BOTH ConfigTab and page.tsx addToWL.
  * Lower number = higher priority (0 is first).
  *
- * Formula: rarity weight provides the primary tier (0-10), then strategy score
- * and market data refine within that tier. Items with the same rarity are
- * differentiated by their score/sold data.
+ * Formula: PRICE is the primary signal (more expensive = higher priority for the
+ * auto-joiner since these are the items worth spending gems on). Score and sold
+ * count refine within price tiers. Rarity is a minor tiebreaker.
  *
- * Output range: 0–100 (clamped). OG items with high scores → ~0, Common items
- * with low scores → ~100.
+ * Output range: 0–100 (clamped). $6000 Headless Horseman → ~0, $1 junk → ~90+.
  */
 export function computePriority(rec: { rarity?: string; score?: number; soldCount?: number; med?: number } | null | undefined): number {
   if (!rec) return 50;
-  const rarityW = getRarityWeight(rec.rarity || '');
-  // Rarity contributes 0-70 (weight 0-10 * 7)
-  const rarityComponent = rarityW * 7;
+  const med = rec.med ?? 0;
+  // Price contributes 0-60 (inverted: higher price = lower number = higher priority)
+  // $500+ → 0, $200→10, $100→15, $50→25, $20→35, $10→40, $5→45, $2→50, <$2→60
+  const priceComponent = med >= 500 ? 0 : med >= 200 ? 10 : med >= 100 ? 15
+    : med >= 50 ? 25 : med >= 20 ? 35 : med >= 10 ? 40
+    : med >= 5 ? 45 : med >= 2 ? 50 : 60;
   // Score contributes 0-20 (inverted: higher score = lower priority number)
   const score = rec.score ?? 0;
   const scoreComponent = Math.max(0, 20 - Math.min(20, score * 0.2));
-  // Sold count contributes 0-10 (more sold = lower priority number = higher priority)
+  // Sold count contributes 0-10 (more sold = lower priority number)
   const sold = rec.soldCount ?? 0;
   const soldComponent = Math.max(0, 10 - Math.min(10, Math.log2(sold + 1) * 2));
-  const priority = Math.round(rarityComponent + scoreComponent + soldComponent);
+  // Rarity is just a minor tiebreaker (0-10)
+  const rarityW = getRarityWeight(rec.rarity || '');
+  const rarityComponent = rarityW; // 0-10 direct, not multiplied
+  const priority = Math.round(priceComponent + scoreComponent + soldComponent + rarityComponent);
   return Math.max(0, Math.min(100, priority));
 }
 
 /**
- * Master sort: rarity tier → sold count → strategy-specific sort.
- * OGs/Secrets/premium rarities always float to the top across ALL strategies.
+ * Master sort: price tier → rarity (tiebreaker) → strategy-specific sort.
+ * Higher-value items float to the top. Rarity only matters between items
+ * in the same price range — a $50 Legendary beats a $1 Secret.
  */
 export function masterSort(a: Recommendation, b: Recommendation, stratSort: (a: Recommendation, b: Recommendation) => number): number {
+  // Price tier: group into tiers so $500 items always beat $20 items
+  const priceTier = (med: number) => med >= 500 ? 0 : med >= 100 ? 1 : med >= 20 ? 2 : med >= 5 ? 3 : 4;
+  const pa = priceTier(a.med ?? 0);
+  const pb = priceTier(b.med ?? 0);
+  if (pa !== pb) return pa - pb;
+  // Within same price tier, rarity is a tiebreaker
   const ra = getRarityWeight(a.rarity);
   const rb = getRarityWeight(b.rarity);
   if (ra !== rb) return ra - rb;
-  const soldDiff = (b.soldCount || 0) - (a.soldCount || 0);
-  if (soldDiff !== 0) return soldDiff;
+  // Then strategy sort
   return stratSort(a, b);
 }
 
@@ -74,51 +85,39 @@ export const raritySort = (a: string, b: string) =>
   (RARITY_ORDER.indexOf(b) === -1 ? 99 : RARITY_ORDER.indexOf(b));
 
 /**
- * Smart min_value calculator — determines the threshold below which the auto-joiner
- * should buy. Uses market data to find deals: targets the p25 price (25th percentile)
- * so you're buying in the bottom quartile of listings.
+ * Smart min_value calculator — determines the gem threshold for the auto-joiner.
+ * Uses ACTUAL median price for ALL rarities — no blind rarity overrides.
+ * A $1 Brainrot God gets the same gem threshold as any other $1 item.
+ * A $6000 OG gets 1B gems naturally from the price tiers.
  *
- * For high-value rarities (OG, Secret, Mythical): more aggressive — uses p10-p25
- * For common items: conservative — uses min price with small buffer
- * For items with good flip potential: uses min + small buffer to catch underpriced listings
- *
- * @param rec Recommendation object with price data and metadata
- * @returns min_value in gems (always ≥ 1,000,000 = $100 floor)
+ * @param rec Recommendation or Brainrot with price data
+ * @returns min_value in gems (always ≥ 1,000,000)
  */
 export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; p25?: number; rarity?: string; flipScore?: number; listings?: number; medianPrice?: number; minPrice?: number } | null): number {
   if (!rec) return 1000000;
 
-  const { rarity } = rec;
-
-  // OG, Admin — always 1M gems (buy everything, these are always valuable)
-  if (rarity === 'OG' || rarity === 'Admin') return 1000000;
-
-  // Brainrot God — always 1M gems (high rarity, always worth sniping)
-  if (rarity === 'Brainrot God') return 1000000;
-
-  // For other rarities, calculate based on median price in USD
   // Use medianPrice (from Brainrot) or med (from Recommendation)
   const med = rec.med ?? (rec as any).medianPrice ?? 0;
   const min = rec.min ?? (rec as any).minPrice ?? 0;
 
-  // If no price data, default to 1M
+  // If no price data, default to 1M (floor)
   if (med <= 0 && min <= 0) return 1000000;
 
   const price = med > 0 ? med : min;
 
-  // Price-to-gems conversion thresholds:
-  // These are gem min_values that make sense for the auto-joiner
-  // Higher median price = higher gem threshold to avoid junk listings
+  // Price-to-gems conversion tiers:
+  // Higher USD median → higher gem threshold so the auto-joiner
+  // only buys when the gem price is proportionally worth it.
   //
-  // $500+  → 1B gems  (ultra-premium combos like La Romantic Grande)
-  // $200+  → 700M gems
+  // $500+  → 1B gems   (ultra-premium: Headless Horseman, top OGs)
+  // $200+  → 700M gems (premium: Strawberry Elephant, rare Secrets)
   // $100+  → 500M gems
   // $50+   → 400M gems
   // $20+   → 300M gems
   // $10+   → 200M gems
   // $5+    → 100M gems
-  // $2+    → 1M gems (floor — buy anything)
-  // <$2    → 1M gems (floor)
+  // $2+    → 50M gems
+  // <$2    → 1M gems   (floor — cheap items, minimal gem spend)
 
   if (price >= 500) return 1000000000;
   if (price >= 200) return 700000000;
@@ -127,6 +126,7 @@ export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; 
   if (price >= 20) return 300000000;
   if (price >= 10) return 200000000;
   if (price >= 5) return 100000000;
+  if (price >= 2) return 50000000;
   return 1000000;
 }
 

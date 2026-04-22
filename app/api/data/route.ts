@@ -657,11 +657,20 @@ function buildRecommendations(brainrots: Record<string, any>, wlMap: Record<stri
     const wlPriority = wlMap[name.toLowerCase()]?.priority ?? -1;
     const wlBonus = wlPriority >= 0 ? Math.max(0, 5 - (wlPriority / 15)) : 0;
 
-    // Rarity bonus — OGs/Secrets/Mythicals get massive score boost
-    const rarityBonus = RARITY_SCORE_BONUS[b.rarity] ?? 0;
+    // Rarity bonus — SCALED by actual price. A $1 Secret gets almost no bonus.
+    // A $500 OG gets the full bonus. This prevents cheap junk from outscoring
+    // genuinely valuable items just because they have a "rare" label.
+    const maxRarityBonus = RARITY_SCORE_BONUS[b.rarity] ?? 0;
+    // Price scaling: $0→0%, $5→25%, $20→50%, $100→80%, $500+→100% of max bonus
+    const priceScale = medPrice >= 500 ? 1.0
+      : medPrice >= 100 ? 0.8
+      : medPrice >= 20 ? 0.5
+      : medPrice >= 5 ? 0.25
+      : medPrice >= 2 ? 0.1
+      : 0;
+    const rarityBonus = Math.round(maxRarityBonus * priceScale * 10) / 10;
 
-    // Combined score — rarity is now the dominant factor
-    // Base market score (0-100 range from factors) + rarity bonus (0-35)
+    // Combined score — market signals are primary, rarity is a bonus for VALUABLE items
     const baseMarketScore = Math.min(100,
       demandScore * 2.0 +   // 20% demand
       supplyScore * 1.2 +   // 12% scarcity
@@ -670,7 +679,7 @@ function buildRecommendations(brainrots: Record<string, any>, wlMap: Record<stri
       valueScore * 1.3 +    // 13% value
       wlBonus * 2.0         // bonus: watchlist
     );
-    // Final score: market score + rarity bonus (can exceed 100 for top-tier items)
+    // Final score: market score + price-scaled rarity bonus
     const score = isFinite(baseMarketScore + rarityBonus) ? baseMarketScore + rarityBonus : rarityBonus;
 
     // Tier based on percentile within scored items (will be adjusted after sorting)

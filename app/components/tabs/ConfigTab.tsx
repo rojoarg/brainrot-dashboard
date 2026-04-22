@@ -12,16 +12,20 @@ interface ConfigTabProps {
   showToast: (msg: string) => void;
 }
 
-/* ─── Profit Score — combines rarity value, flip potential, and demand ─── */
+/* ─── Profit Score — combines ACTUAL VALUE, flip potential, and demand ─── */
+/* Price is the dominant signal — a $500 item always outscores a $1 item    */
+/* regardless of rarity name. Rarity is only a minor tiebreaker.            */
 function profitScore(r: Recommendation): number {
   if (!r) return 0;
-  const rarityBonus = 10 - (getRarityWeight(r.rarity));  // OG=10, Brainrot God=9, Common=0
+  // Price is primary signal (0-15): log10 scales well across $1-$10000 range
+  const priceSignal = r.med > 0 ? Math.min(15, Math.log10(r.med + 1) * 4) : 0;
   const flip = r.flipScore ?? 0;
   const farm = r.farmScore ?? 0;
   const demand = r.soldCount > 0 ? Math.min(5, Math.log2(r.soldCount + 1)) : 0;
-  const value = r.med > 0 ? Math.min(5, Math.log10(r.med + 1) * 2) : 0;
   const baseScore = r.score ?? 0;
-  const score = rarityBonus * 3 + flip * 1.5 + farm * 1 + demand * 2 + value * 1.5 + baseScore * 0.3;
+  // Rarity is a minor tiebreaker (0-3), NOT the dominant factor
+  const rarityTiebreak = Math.max(0, 10 - getRarityWeight(r.rarity)) * 0.3;
+  const score = priceSignal * 3 + flip * 1.5 + farm * 1 + demand * 2 + rarityTiebreak + baseScore * 0.3;
   return isFinite(score) ? score : 0;
 }
 
@@ -70,27 +74,30 @@ const STRATEGIES: Record<string, {
     filterHint: 'Look for underpriced listings to flip',
   },
   sniper: {
-    label: 'Sniper', desc: 'Rare underpriced items — OGs, Secrets, limited drops', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
+    label: 'Sniper', desc: 'Scarce high-value items — underpriced gems', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
     sort: (a: Recommendation, b: Recommendation) => {
-      // Snipers want: high rarity + few listings (scarcity) + high value potential
-      // Key difference: rarity directly weighted heavy, scarcity premium
-      const rarityA = 10 - getRarityWeight(a.rarity);
-      const rarityB = 10 - getRarityWeight(b.rarity);
-      const aScore = rarityA * 5 + (a.scarcityScore ?? 0) * 3 + (a.valueScore ?? 0) * 2 + ((a.soldCount ?? 0) > 0 ? 3 : 0);
-      const bScore = rarityB * 5 + (b.scarcityScore ?? 0) * 3 + (b.valueScore ?? 0) * 2 + ((b.soldCount ?? 0) > 0 ? 3 : 0);
+      // Snipers want: high value + few listings (scarcity) + rarity as bonus
+      // Price is primary — a scarce $500 item beats a scarce $1 item
+      const aPrice = Math.min(10, Math.log10((a.med ?? 0) + 1) * 3);
+      const bPrice = Math.min(10, Math.log10((b.med ?? 0) + 1) * 3);
+      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.3;
+      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.3;
+      const aScore = aPrice * 4 + (a.scarcityScore ?? 0) * 3 + (a.valueScore ?? 0) * 2 + ((a.soldCount ?? 0) > 0 ? 3 : 0) + rarityA;
+      const bScore = bPrice * 4 + (b.scarcityScore ?? 0) * 3 + (b.valueScore ?? 0) * 2 + ((b.soldCount ?? 0) > 0 ? 3 : 0) + rarityB;
       return bScore - aScore;
     },
-    filterHint: 'Auto-targets rare + scarce items',
+    filterHint: 'Auto-targets scarce high-value items',
   },
   whale: {
-    label: 'Whale', desc: 'Premium high-value items only — OGs & top-tier', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
+    label: 'Whale', desc: 'Premium high-value items only — $10+ market', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
+    autoMaxPrice: undefined,
     sort: (a: Recommendation, b: Recommendation) => {
-      // Whales want: highest value items, premium rarities, proven market
-      // Key difference: median price heavily weighted, seller diversity bonus, strong sold bonus
-      const rarityA = 10 - getRarityWeight(a.rarity);
-      const rarityB = 10 - getRarityWeight(b.rarity);
-      const aScore = rarityA * 4 + (a.med ?? 0) * 0.5 + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3;
-      const bScore = rarityB * 4 + (b.med ?? 0) * 0.5 + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3;
+      // Whales want: highest value items period. Price is THE signal.
+      // Rarity is a minor bonus, not the driver.
+      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.3;
+      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.3;
+      const aScore = (a.med ?? 0) * 1.0 + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3 + rarityA;
+      const bScore = (b.med ?? 0) * 1.0 + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3 + rarityB;
       return bScore - aScore;
     },
     filterHint: 'Focus on $10+ premium items',
@@ -131,7 +138,7 @@ const STRATEGIES: Record<string, {
 
 function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [activeStrategy, setActiveStrategy] = useState<string>('allstar');
-  const [minPrice, setMinPrice] = useState('0.50');
+  const [minPrice, setMinPrice] = useState('2');
   const [maxPrice, setMaxPrice] = useState('99999');
   const [minListings, setMinListings] = useState('1');
   const [maxItems, setMaxItems] = useState('50');
