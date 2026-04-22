@@ -4,6 +4,32 @@ import { RARITY_WEIGHT, RARITY_SCORE_BONUS, RARITY_TIER_FLOOR } from '../../lib/
 
 export const revalidate = 300;
 
+// ─── Simple in-memory rate limiter ───
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 15; // 15 requests per minute per IP
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= RATE_LIMIT_MAX;
+}
+// Periodic cleanup of stale entries (every 5 min)
+if (typeof globalThis !== 'undefined') {
+  const cleanup = () => {
+    const now = Date.now();
+    for (const [key, val] of rateLimitMap) {
+      if (now > val.resetAt) rateLimitMap.delete(key);
+    }
+  };
+  setInterval(cleanup, 5 * 60_000).unref?.();
+}
+
 // ─── Types ───
 interface SellerStats {
   count: number; verified: boolean; uniquePets: Set<string>;
@@ -44,8 +70,15 @@ async function fetchAllListings(): Promise<any[]> {
   return results;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+  // Rate limiting
+  const forwarded = request.headers.get('x-forwarded-for');
+  const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
+  if (!checkRateLimit(ip)) {
+    return NextResponse.json({ error: 'Rate limit exceeded. Please wait before refreshing.' }, { status: 429 });
+  }
+
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   const sevenDaysAgo = new Date();
@@ -523,6 +556,11 @@ export async function GET() {
     },
     trending: trendingItems,
     config: configData,
+  }, {
+    headers: {
+      'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+      'X-Content-Type-Options': 'nosniff',
+    },
   });
   } catch (err: any) {
     console.error('Data API GET error:', err);
@@ -658,7 +696,7 @@ function buildRecommendations(brainrots: Record<string, any>, wlMap: Record<stri
       .slice(0, 15);
 
     recs.push({
-      name, rarity: b.rarity, rarityWeight: RARITY_WEIGHT[b.rarity] ?? 6,
+      name, rarity: b.rarity, rarityWeight: RARITY_WEIGHT[b.rarity] ?? 7,
       tier: '', score: Math.round(score * 10) / 10,
       demandScore: Math.round(demandScore * 10) / 10,
       scarcityScore: Math.round(supplyScore * 10) / 10,
@@ -695,7 +733,7 @@ function buildRecommendations(brainrots: Record<string, any>, wlMap: Record<stri
     const scoreDiff = b.score - a.score;
     if (Math.abs(scoreDiff) > 0.5) return scoreDiff;
     // Within similar scores, rarer items come first
-    const rw = (RARITY_WEIGHT[a.rarity] ?? 6) - (RARITY_WEIGHT[b.rarity] ?? 6);
+    const rw = (RARITY_WEIGHT[a.rarity] ?? 7) - (RARITY_WEIGHT[b.rarity] ?? 7);
     if (rw !== 0) return rw;
     // Same rarity + same score: prefer more sold
     return (b.soldCount || 0) - (a.soldCount || 0);

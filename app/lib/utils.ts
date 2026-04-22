@@ -2,7 +2,7 @@ import type { Config, WLItem, MutationAdvisory, Recommendation } from './types';
 import { RARITY_ORDER, RARITY_WEIGHT, MUTATION_MULTIPLIERS } from './constants';
 
 /* ─── Rarity Helpers (shared by ConfigTab + UserDashTab) ─── */
-export const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 6;
+export const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
 
 /**
  * Master sort: rarity tier → sold count → strategy-specific sort.

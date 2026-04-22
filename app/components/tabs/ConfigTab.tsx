@@ -122,6 +122,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [minListings, setMinListings] = useState('1');
   const [maxItems, setMaxItems] = useState('50');
   const [rarity, setRarity] = useState('all');
+  const [excludedRarities, setExcludedRarities] = useState<Set<string>>(new Set());
   const [generated, setGenerated] = useState<Recommendation[] | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -145,9 +146,10 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       r && r.name &&
       (r.med ?? 0) >= lo && (r.med ?? 0) <= hi && (r.listings ?? 0) >= ml &&
       (rarity === 'all' || r.rarity === rarity) &&
+      !excludedRarities.has(r.rarity) &&
       !bl.has(r.name.toLowerCase())
     );
-  }, [data, minPrice, maxPrice, minListings, rarity, config.blacklisted]);
+  }, [data, minPrice, maxPrice, minListings, rarity, excludedRarities, config.blacklisted]);
 
   /* Apply masterSort (rarity → sold → strategy) for ALL strategies */
   const results = useMemo(() => {
@@ -344,6 +346,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           <div className="d-flex items-center gap-2">
             <span className="text-md fw-600 text-sub">Filters & Options</span>
             <span className="text-sm text-muted">{filtered.length} pets match</span>
+            {excludedRarities.size > 0 && <span className="pill pill-warn">{excludedRarities.size} rarity excluded</span>}
             {config.blacklisted.length > 0 && <span className="pill pill-warn">{config.blacklisted.length} blacklisted</span>}
           </div>
           <span className={`text-md text-muted animate-chevron${showFilters ? ' open' : ''}`}>{'\u25BC'}</span>
@@ -375,6 +378,36 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                 <input className="input" type="number" value={maxItems} onChange={e => setMaxItems(Math.max(1, parseInt(e.target.value) || 50).toString())} placeholder="50" min="1" />
               </div>
             </div>
+
+            {/* Exclude Rarities */}
+            {allRarities.length > 0 && (
+              <div>
+                <div className="d-flex justify-between items-center mb-2">
+                  <span className="text-sm fw-600 text-sub">Exclude Rarities</span>
+                  {excludedRarities.size > 0 && <button type="button" className="btn btn-sm" onClick={() => setExcludedRarities(new Set())}>Clear</button>}
+                </div>
+                <div className="d-flex flex-wrap gap-1">
+                  {allRarities.map(r => {
+                    const isExcluded = excludedRarities.has(r);
+                    return (
+                      <button key={r} type="button"
+                        className={`btn btn-sm ${isExcluded ? 'btn-danger' : ''}`}
+                        onClick={() => {
+                          setExcludedRarities(prev => {
+                            const next = new Set(prev);
+                            if (next.has(r)) next.delete(r); else next.add(r);
+                            return next;
+                          });
+                        }}
+                        aria-pressed={isExcluded}
+                      >
+                        {isExcluded ? '\u2715 ' : ''}{r}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Blacklist inline */}
             <div>

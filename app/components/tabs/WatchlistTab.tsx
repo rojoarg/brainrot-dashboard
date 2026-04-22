@@ -67,6 +67,11 @@ export default React.memo(function WatchlistTab({ data, config, openDetail, remo
             <th>Listings</th><th>Score</th><th>Sold</th><th>Mutations</th><th></th>
           </tr></thead>
           <tbody role="rowgroup">
+            {filtered.length === 0 && (
+              <tr><td colSpan={14} className="text-center text-muted p-4">
+                {items.length === 0 ? 'Your watchlist is empty. Add items from the Recs or Brainrots tab.' : 'No watchlist items match your search.'}
+              </td></tr>
+            )}
             {filtered.map((item: typeof items[0]) => {
               const overrides = item.advisory.filter((a: MutationAdvisory) => a.needsOverride);
               const isExpanded = expandedItem === item.pet_name;

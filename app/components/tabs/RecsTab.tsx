@@ -8,7 +8,7 @@ import { StatCard, TierBadge, RarityBadge, WLButton, ImageThumb, SearchInput, Fi
 
 // Rarity-first tiebreaker: within similar primary sort values, rarer items come first
 const rarityTiebreak = (a: Recommendation, b: Recommendation) =>
-  (RARITY_WEIGHT[a.rarity] ?? 6) - (RARITY_WEIGHT[b.rarity] ?? 6);
+  (RARITY_WEIGHT[a.rarity] ?? 7) - (RARITY_WEIGHT[b.rarity] ?? 7);
 
 interface RecsTabProps {
   data: DashData;
@@ -24,6 +24,7 @@ export default React.memo(function RecsTab({ data, search, setSearch, openDetail
   const [tierFilter, setTierFilter] = useState('all');
   const [rarityFilter, setRarityFilter] = useState('all');
   const [sortBy, setSortBy] = useState('score');
+  const [showCount, setShowCount] = useState(80);
   const recs = useMemo(() => {
     if (!data?.recommendations) return [];
     let arr = [...data.recommendations];
@@ -105,7 +106,7 @@ export default React.memo(function RecsTab({ data, search, setSearch, openDetail
             {recs.length === 0 && (
               <tr><td colSpan={15} className="text-center text-muted p-4">No recommendations match your filters</td></tr>
             )}
-            {recs.slice(0, 300).map((r: Recommendation) => (
+            {recs.slice(0, showCount).map((r: Recommendation) => (
               <tr key={`rec-${r.name}`} onClick={() => openDetail(r.name)} className="clickable" role="row">
                 <td><ImageThumb src={r.imageUrl} size={24} /></td>
                 <td><TierBadge tier={r.tier} /></td>
@@ -127,6 +128,13 @@ export default React.memo(function RecsTab({ data, search, setSearch, openDetail
           </tbody>
         </table>
       </div>
+      {recs.length > showCount && (
+        <div className="text-center mt-3">
+          <button type="button" className="btn" onClick={() => setShowCount(c => Math.min(c + 80, recs.length))}>
+            Show more ({recs.length - showCount} remaining)
+          </button>
+        </div>
+      )}
     </div>
   );
 });

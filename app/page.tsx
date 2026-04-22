@@ -216,9 +216,14 @@ export default function Dashboard() {
       <div className="empty-state-sub">
         {loadError || 'The dashboard could not load. Please try refreshing.'}
       </div>
-      <button type="button" className="btn btn-primary mt-3" onClick={() => window.location.reload()}>
-        Refresh
-      </button>
+      <div className="d-flex gap-2 justify-center mt-3">
+        <button type="button" className="btn btn-primary" onClick={() => refresh()}>
+          Retry
+        </button>
+        <button type="button" className="btn" onClick={() => window.location.reload()}>
+          Hard Refresh
+        </button>
+      </div>
     </div>
   );
 
@@ -325,7 +330,7 @@ export default function Dashboard() {
         </button>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
     </div>
   );
 }

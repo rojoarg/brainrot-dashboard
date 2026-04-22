@@ -7,7 +7,7 @@ import { fmt, fmtPrice } from '../../lib/utils';
 import { RARITY_WEIGHT } from '../../lib/constants';
 import { SearchInput, FilterBar, RarityBadge, ImageThumb, WLButton } from '../ui';
 
-const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 6;
+const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
 
 interface BrainrotsTabProps {
   data: DashData;
@@ -35,6 +35,7 @@ function BrainrotsTab({
   removeFromWL,
 }: BrainrotsTabProps) {
   const [rarityFilter, setRarityFilter] = useState('all');
+  const [showCount, setShowCount] = useState(100);
 
   const entries = useMemo(() => {
     if (!data?.brainrots) return [];
@@ -63,8 +64,8 @@ function BrainrotsTab({
   );
 
   const SortTh = ({ col, children }: { col: string; children: React.ReactNode }) => (
-    <th onClick={() => handleSort(col)} className="cursor-pointer">
-      {children} <span className={`sort-arrow${sortCol === col ? ' active' : ''}`}>{sortCol === col ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</span>
+    <th onClick={() => handleSort(col)} className="cursor-pointer" aria-sort={sortCol === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'} role="columnheader">
+      {children} <span className={`sort-arrow${sortCol === col ? ' active' : ''}`} aria-hidden="true">{sortCol === col ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</span>
     </th>
   );
 
@@ -99,7 +100,7 @@ function BrainrotsTab({
             {entries.length === 0 && (
               <tr><td colSpan={11} className="text-center text-muted p-4">No brainrots{search ? ' match your search' : rarityFilter !== 'all' ? ` with rarity "${rarityFilter}"` : ' found'}</td></tr>
             )}
-            {entries.slice(0, 500).map(b => (
+            {entries.slice(0, showCount).map(b => (
               <tr key={`brainrot-${b.name}`} onClick={() => openDetail(b.name)} className="clickable" role="row">
                 <td>
                   <ImageThumb src={b.imageUrl} size={24} />
@@ -125,6 +126,13 @@ function BrainrotsTab({
           </tbody>
         </table>
       </div>
+      {entries.length > showCount && (
+        <div className="text-center mt-3">
+          <button type="button" className="btn" onClick={() => setShowCount(c => Math.min(c + 100, entries.length))}>
+            Show more ({entries.length - showCount} remaining)
+          </button>
+        </div>
+      )}
     </div>
   );
 }
