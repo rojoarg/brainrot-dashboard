@@ -12,20 +12,39 @@ interface ConfigTabProps {
   showToast: (msg: string) => void;
 }
 
-/* ─── Profit Score — combines ACTUAL VALUE, flip potential, and demand ─── */
-/* Price is the dominant signal — a $500 item always outscores a $1 item    */
-/* regardless of rarity name. Rarity is only a minor tiebreaker.            */
+/* ─── Profit Score — unified value ranking for All-Star & Diversified ─── */
+/* Balances price, demand, flip potential, and market signals.              */
+/* A $500 item with no demand can lose to a $20 item everyone's buying.    */
+/* But a $500 item WITH demand will always beat a $20 item.                */
 function profitScore(r: Recommendation): number {
   if (!r) return 0;
-  // Price is primary signal (0-15): log10 scales well across $1-$10000 range
-  const priceSignal = r.med > 0 ? Math.min(15, Math.log10(r.med + 1) * 4) : 0;
-  const flip = r.flipScore ?? 0;
-  const farm = r.farmScore ?? 0;
-  const demand = r.soldCount > 0 ? Math.min(5, Math.log2(r.soldCount + 1)) : 0;
-  const baseScore = r.score ?? 0;
-  // Rarity is a minor tiebreaker (0-3), NOT the dominant factor
+  const med = r.med ?? 0;
+
+  // Price signal (0-40): sqrt scaling gives better spread than log10.
+  // $1→1, $5→4.5, $10→6.3, $20→9, $50→14, $100→20, $500→45→capped at 40
+  // This means a $100 item scores 20x more than a $1 item on price alone.
+  const priceSignal = med > 0 ? Math.min(40, Math.sqrt(med) * 2) : 0;
+
+  // Flip potential (0-15): how much spread exists to profit from
+  const flip = Math.min(15, (r.flipScore ?? 0) * 1.5);
+
+  // Demand proof (0-15): sold items = proven market, heavily valued
+  const demand = r.soldCount > 0 ? Math.min(15, Math.log2(r.soldCount + 1) * 3) : 0;
+
+  // Farm potential (0-8): good for repeat farming
+  const farm = Math.min(8, (r.farmScore ?? 0));
+
+  // Market depth (0-5): multiple listings = reliable supply
+  const depth = Math.min(5, (r.listings ?? 0) >= 10 ? 5 : (r.listings ?? 0) >= 5 ? 3 : (r.listings ?? 0) >= 2 ? 1 : 0);
+
+  // Base recommendation score (0-10): from buildRecommendations
+  const baseScore = Math.min(10, (r.score ?? 0) * 0.1);
+
+  // Rarity is just a tiebreaker (0-3)
   const rarityTiebreak = Math.max(0, 10 - getRarityWeight(r.rarity)) * 0.3;
-  const score = priceSignal * 3 + flip * 1.5 + farm * 1 + demand * 2 + rarityTiebreak + baseScore * 0.3;
+
+  // Total: max ~96. Price is ~40% of max, demand ~16%, flip ~16%, farm ~8%, depth ~5%
+  const score = priceSignal + flip + demand + farm + depth + baseScore + rarityTiebreak;
   return isFinite(score) ? score : 0;
 }
 
@@ -41,9 +60,10 @@ const STRATEGIES: Record<string, {
   filterHint?: string;
 }> = {
   allstar: {
-    label: 'All-Star', desc: 'Maximum profit — rarity + demand + flip potential', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
+    label: 'All-Star', desc: 'Best overall value — balances price, demand, flip & rarity', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
+    bypassMasterSort: true,
     sort: (a: Recommendation, b: Recommendation) => profitScore(b) - profitScore(a),
-    filterHint: 'Best overall money-makers',
+    filterHint: 'Best overall money-makers across all price ranges',
   },
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand, easy resell', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
@@ -75,6 +95,7 @@ const STRATEGIES: Record<string, {
   },
   sniper: {
     label: 'Sniper', desc: 'Scarce high-value items — underpriced gems', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
+    bypassMasterSort: true,
     sort: (a: Recommendation, b: Recommendation) => {
       // Snipers want: high value + few listings (scarcity) + rarity as bonus
       // Price is primary — a scarce $500 item beats a scarce $1 item
@@ -130,6 +151,7 @@ const STRATEGIES: Record<string, {
   },
   diversified: {
     label: 'Diversified', desc: 'Balanced portfolio across all rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
+    bypassMasterSort: true,
     sort: (a: Recommendation, b: Recommendation) => profitScore(b) - profitScore(a),
     diversified: true,
     filterHint: 'Auto-picks best from each rarity tier',
@@ -201,17 +223,17 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       for (const rar of rarities) {
         const weight = 11 - getRarityWeight(rar);
         const slots = Math.max(2, Math.round((weight / Math.max(totalWeight, 1)) * maxN));
-        byRarity[rar].sort((a, b) => masterSort(a, b, stratSort));
+        byRarity[rar].sort(stratSort);
         result.push(...byRarity[rar].slice(0, slots));
       }
-      // Dedupe (in case of overlap) and final sort
+      // Dedupe (in case of overlap) and final sort by profitScore
       const seen = new Set<string>();
       const deduped = result.filter(r => {
         if (seen.has(r.name)) return false;
         seen.add(r.name);
         return true;
       });
-      return deduped.sort((a, b) => masterSort(a, b, stratSort)).slice(0, maxN);
+      return deduped.sort(stratSort).slice(0, maxN);
     }
 
     return [...filtered].sort(sortFn).slice(0, maxN);
