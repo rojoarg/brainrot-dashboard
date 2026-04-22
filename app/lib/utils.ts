@@ -59,43 +59,49 @@ export const raritySort = (a: string, b: string) =>
  * @param rec Recommendation object with price data and metadata
  * @returns min_value in gems (always ≥ 1,000,000 = $100 floor)
  */
-export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; p25?: number; rarity?: string; flipScore?: number; listings?: number } | null): number {
+export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; p25?: number; rarity?: string; flipScore?: number; listings?: number; medianPrice?: number; minPrice?: number } | null): number {
   if (!rec) return 1000000;
 
-  const { min, med, p10, p25, rarity, flipScore, listings } = rec;
+  const { rarity } = rec;
 
-  // If no meaningful price data, default high (won't filter anything)
-  // min and med must be positive numbers to calculate meaningful targets
-  if (min == null || min <= 0 || med == null || med <= 0) return 1000000;
+  // OG, Admin — always 1M gems (buy everything, these are always valuable)
+  if (rarity === 'OG' || rarity === 'Admin') return 1000000;
 
-  const RARITY_AGGRESSION: Record<string, number> = {
-    'OG': 0.85, 'Brainrot God': 0.85, Admin: 0.80, Secret: 0.75, Mythical: 0.70,
-    Legendary: 0.60, Taco: 0.55, Valentines: 0.55, Festive: 0.55,
-    Epic: 0.45, Rare: 0.35, Uncommon: 0.25, Common: 0.15,
-  };
+  // Brainrot God — always 1M gems (high rarity, always worth sniping)
+  if (rarity === 'Brainrot God') return 1000000;
 
-  const aggression = (rarity ? RARITY_AGGRESSION[rarity] : undefined) ?? 0.3;
+  // For other rarities, calculate based on median price in USD
+  // Use medianPrice (from Brainrot) or med (from Recommendation)
+  const med = rec.med ?? (rec as any).medianPrice ?? 0;
+  const min = rec.min ?? (rec as any).minPrice ?? 0;
 
-  // Base: blend between p25 and median, weighted by aggression
-  // High aggression (OG) = closer to median (willing to pay more)
-  // Low aggression (Common) = closer to min (only buy cheap)
-  const baseTarget = (p25 ?? 0) > 0
-    ? (p25 ?? 0) * (1 - aggression) + med * aggression
-    : min * (1 + aggression * 0.5);
+  // If no price data, default to 1M
+  if (med <= 0 && min <= 0) return 1000000;
 
-  // Flip bonus: if flip score is high, widen the buy range slightly
-  const flipBonus = (flipScore ?? 0) > 5 ? 1.15 : (flipScore ?? 0) > 3 ? 1.08 : 1.0;
+  const price = med > 0 ? med : min;
 
-  // Liquidity penalty: if very few listings, be more conservative
-  const listingCount = Math.max(0, listings ?? 0);
-  const liquidityFactor = listingCount >= 10 ? 1.0 : listingCount >= 3 ? 0.9 : 0.75;
+  // Price-to-gems conversion thresholds:
+  // These are gem min_values that make sense for the auto-joiner
+  // Higher median price = higher gem threshold to avoid junk listings
+  //
+  // $500+  → 1B gems  (ultra-premium combos like La Romantic Grande)
+  // $200+  → 700M gems
+  // $100+  → 500M gems
+  // $50+   → 400M gems
+  // $20+   → 300M gems
+  // $10+   → 200M gems
+  // $5+    → 100M gems
+  // $2+    → 1M gems (floor — buy anything)
+  // <$2    → 1M gems (floor)
 
-  const target = baseTarget * flipBonus * liquidityFactor;
-
-  // min_value is in gems — 1,000,000 is the absolute floor for all items
-  // The calculated target is a USD price, convert to gems (* 10000) and enforce 1M floor
-  if (!isFinite(target) || isNaN(target)) return 1000000;
-  return Math.max(Math.round(target * 10000), 1000000);
+  if (price >= 500) return 1000000000;
+  if (price >= 200) return 700000000;
+  if (price >= 100) return 500000000;
+  if (price >= 50) return 400000000;
+  if (price >= 20) return 300000000;
+  if (price >= 10) return 200000000;
+  if (price >= 5) return 100000000;
+  return 1000000;
 }
 
 /* ─── Mutation Advisory ─── */
