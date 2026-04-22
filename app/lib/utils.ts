@@ -85,10 +85,15 @@ export const raritySort = (a: string, b: string) =>
   (RARITY_ORDER.indexOf(b) === -1 ? 99 : RARITY_ORDER.indexOf(b));
 
 /**
- * Smart min_value calculator — determines the gem threshold for the auto-joiner.
- * Uses ACTUAL median price for ALL rarities — no blind rarity overrides.
- * A $1 Brainrot God gets the same gem threshold as any other $1 item.
- * A $6000 OG gets 1B gems naturally from the price tiers.
+ * Smart min_value calculator — determines the gem budget for the auto-joiner.
+ *
+ * INVERTED logic: expensive USD items get LOW gem thresholds (always buy —
+ * a $440 Skibidi Toilet is a goldmine at any gem price). Cheap USD items get
+ * HIGH gem thresholds (common trades, need bigger gem budgets to compete).
+ *
+ * Think of it as: premium items are ALWAYS worth grabbing, so min_value is
+ * just the floor (1M). Cheaper items need appropriate gem budgets because
+ * they're commonly traded for gems in-game.
  *
  * @param rec Recommendation or Brainrot with price data
  * @returns min_value in gems (always ≥ 1,000,000)
@@ -105,28 +110,24 @@ export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; 
 
   const price = med > 0 ? med : min;
 
-  // Price-to-gems conversion tiers:
-  // Higher USD median → higher gem threshold so the auto-joiner
-  // only buys when the gem price is proportionally worth it.
+  // INVERTED price-to-gems tiers:
+  // Premium items (expensive in USD) → LOW gem threshold (always buy)
+  // Common items (cheap in USD) → HIGH gem threshold (standard gem budget)
   //
-  // $500+  → 1B gems   (ultra-premium: Headless Horseman, top OGs)
-  // $200+  → 700M gems (premium: Strawberry Elephant, rare Secrets)
-  // $100+  → 500M gems
-  // $50+   → 400M gems
-  // $20+   → 300M gems
-  // $10+   → 200M gems
-  // $5+    → 100M gems
-  // $2+    → 50M gems
-  // <$2    → 1M gems   (floor — cheap items, minimal gem spend)
+  // $100+  → 1M gems    (always buy — premium finds worth $100+ USD)
+  // $50+   → 50M gems   (near-premium, great find)
+  // $20+   → 300M gems  (solid mid-tier)
+  // $10+   → 1B gems    (good items, standard gem budget)
+  // $5+    → 1.5B gems  (common trades, bigger gem budget)
+  // $2+    → 2B gems    (cheap but tradeable, max gem budget)
+  // <$2    → 1M gems    (junk floor — shouldn't be in config)
 
-  if (price >= 500) return 1000000000;
-  if (price >= 200) return 700000000;
-  if (price >= 100) return 500000000;
-  if (price >= 50) return 400000000;
+  if (price >= 100) return 1000000;
+  if (price >= 50) return 50000000;
   if (price >= 20) return 300000000;
-  if (price >= 10) return 200000000;
-  if (price >= 5) return 100000000;
-  if (price >= 2) return 50000000;
+  if (price >= 10) return 1000000000;
+  if (price >= 5) return 1500000000;
+  if (price >= 2) return 2000000000;
   return 1000000;
 }
 

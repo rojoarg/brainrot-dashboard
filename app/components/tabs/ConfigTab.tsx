@@ -178,27 +178,32 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return Array.from(set).sort();
   }, [data]);
 
-  /* Global filter applied to ALL strategies — also applies autoMaxPrice from strategy */
+  /* Global filter — premium items ($50+) always pass, filters only constrain the strategy pool.
+     Also applies autoMaxPrice from strategy (e.g. Budget caps at $5). */
   const filtered = useMemo(() => {
     if (!data?.recommendations) return [];
     const strat = STRATEGIES[activeStrategy];
     const lo = parseFloat(minPrice) || 0;
-    // Strategy autoMaxPrice caps the user's maxPrice (e.g. Budget auto-caps at $5)
     const userHi = parseFloat(maxPrice) || 999999;
     const hi = strat?.autoMaxPrice ? Math.min(userHi, strat.autoMaxPrice) : userHi;
     const ml = parseInt(minListings) || 1;
     const bl = new Set(config.blacklisted.map((n: string) => n.toLowerCase()));
-    return data.recommendations.filter((r: Recommendation) =>
-      r && r.name &&
-      (r.med ?? 0) >= lo && (r.med ?? 0) <= hi && (r.listings ?? 0) >= ml &&
-      (rarity === 'all' || r.rarity === rarity) &&
-      !excludedRarities.has(r.rarity) &&
-      !bl.has(r.name.toLowerCase())
-    );
+    return data.recommendations.filter((r: Recommendation) => {
+      if (!r || !r.name || bl.has(r.name.toLowerCase())) return false;
+      if (rarity !== 'all' && r.rarity !== rarity) return false;
+      if (excludedRarities.has(r.rarity)) return false;
+      // Premium items ($50+ median) always pass price filters — they're always-buy
+      const isPremium = (r.med ?? 0) >= PREMIUM_THRESHOLD;
+      if (isPremium) return (r.listings ?? 0) >= ml;
+      // Strategy pool: apply all filters including min/max price
+      return (r.med ?? 0) >= lo && (r.med ?? 0) <= hi && (r.listings ?? 0) >= ml;
+    });
   }, [data, minPrice, maxPrice, minListings, rarity, excludedRarities, config.blacklisted, activeStrategy]);
 
-  /* Apply sorting — masterSort (rarity→sold→strategy) for rarity-first strategies,
-     or pure strategy sort for bypassMasterSort strategies */
+  /* Apply sorting — premium items ($50+ median) ALWAYS pinned at top of every strategy,
+     then remaining slots filled by strategy-specific sort. This ensures the auto-joiner
+     always grabs high-value finds regardless of which strategy is active. */
+  const PREMIUM_THRESHOLD = 50; // $50+ median = premium, always pinned at top
   const results = useMemo(() => {
     const strat = STRATEGIES[activeStrategy];
     const stratSort = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
@@ -218,7 +223,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       const rarities = Object.keys(byRarity).sort((a, b) => getRarityWeight(a) - getRarityWeight(b));
 
       // Weight allocation: rarer tiers (lower weight) get more slots
-      // OG(w=0)→11pts, BrainrotGod(w=1)→10pts, ..., Common(w=10)→1pt
       const totalWeight = rarities.reduce((sum, r) => sum + (11 - getRarityWeight(r)), 0);
       for (const rar of rarities) {
         const weight = 11 - getRarityWeight(rar);
@@ -226,7 +230,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         byRarity[rar].sort(stratSort);
         result.push(...byRarity[rar].slice(0, slots));
       }
-      // Dedupe (in case of overlap) and final sort by profitScore
       const seen = new Set<string>();
       const deduped = result.filter(r => {
         if (seen.has(r.name)) return false;
@@ -236,7 +239,26 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       return deduped.sort(stratSort).slice(0, maxN);
     }
 
-    return [...filtered].sort(sortFn).slice(0, maxN);
+    // Split into premium (always-buy) and strategy picks
+    const premium = filtered.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
+    const strategyPool = filtered.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
+
+    // Sort premium by price descending (most valuable first)
+    premium.sort((a, b) => (b.med ?? 0) - (a.med ?? 0));
+    // Sort strategy pool by strategy-specific sort
+    strategyPool.sort(sortFn);
+
+    // Combine: premium pinned at top, then strategy picks fill remaining slots
+    const seen = new Set<string>();
+    const combined: Recommendation[] = [];
+    for (const r of premium) {
+      if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); }
+    }
+    for (const r of strategyPool) {
+      if (combined.length >= maxN) break;
+      if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); }
+    }
+    return combined.slice(0, maxN);
   }, [filtered, activeStrategy, maxItems]);
 
   /* Build config from results and immediately download */
