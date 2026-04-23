@@ -178,6 +178,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return Array.from(set).sort();
   }, [data]);
 
+  const PREMIUM_THRESHOLD = 50; // $50+ median = premium, always pinned at top
+
   /* Global filter — premium items ($50+) always pass, filters only constrain the strategy pool.
      Also applies autoMaxPrice from strategy (e.g. Budget caps at $5). */
   const filtered = useMemo(() => {
@@ -203,7 +205,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   /* Apply sorting — premium items ($50+ median) ALWAYS pinned at top of every strategy,
      then remaining slots filled by strategy-specific sort. This ensures the auto-joiner
      always grabs high-value finds regardless of which strategy is active. */
-  const PREMIUM_THRESHOLD = 50; // $50+ median = premium, always pinned at top
   const results = useMemo(() => {
     const strat = STRATEGIES[activeStrategy];
     const stratSort = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
