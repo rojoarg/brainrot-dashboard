@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import type { Config, DashData, MutationAdvisory, Recommendation, WLItem } from '../../lib/types';
-import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, masterSort, computePriority } from '../../lib/utils';
+import type { Config, DashData, Recommendation, WLItem } from '../../lib/types';
+import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority } from '../../lib/utils';
 import { RarityBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -12,157 +12,101 @@ interface ConfigTabProps {
   showToast: (msg: string) => void;
 }
 
-/* ─── Profit Score — unified value ranking for All-Star & Diversified ─── */
-/* Balances price, demand, flip potential, and market signals.              */
-/* A $500 item with no demand can lose to a $20 item everyone's buying.    */
-/* But a $500 item WITH demand will always beat a $20 item.                */
+/* ─── Profit Score — unified value ranking ─── */
 function profitScore(r: Recommendation): number {
   if (!r) return 0;
   const med = r.med ?? 0;
-
-  // Price signal (0-40): sqrt scaling gives better spread than log10.
-  // $1→1, $5→4.5, $10→6.3, $20→9, $50→14, $100→20, $500→45→capped at 40
-  // This means a $100 item scores 20x more than a $1 item on price alone.
   const priceSignal = med > 0 ? Math.min(40, Math.sqrt(med) * 2) : 0;
-
-  // Flip potential (0-15): how much spread exists to profit from
   const flip = Math.min(15, (r.flipScore ?? 0) * 1.5);
-
-  // Demand proof (0-15): sold items = proven market, heavily valued
   const demand = r.soldCount > 0 ? Math.min(15, Math.log2(r.soldCount + 1) * 3) : 0;
-
-  // Farm potential (0-8): good for repeat farming
   const farm = Math.min(8, (r.farmScore ?? 0));
-
-  // Market depth (0-5): multiple listings = reliable supply
   const depth = Math.min(5, (r.listings ?? 0) >= 10 ? 5 : (r.listings ?? 0) >= 5 ? 3 : (r.listings ?? 0) >= 2 ? 1 : 0);
-
-  // Base recommendation score (0-10): from buildRecommendations
   const baseScore = Math.min(10, (r.score ?? 0) * 0.1);
-
-  // Rarity is just a tiebreaker (0-3)
   const rarityTiebreak = Math.max(0, 10 - getRarityWeight(r.rarity)) * 0.3;
-
-  // Total: max ~96. Price is ~40% of max, demand ~16%, flip ~16%, farm ~8%, depth ~5%
   const score = priceSignal + flip + demand + farm + depth + baseScore + rarityTiebreak;
   return isFinite(score) ? score : 0;
 }
 
-/* ─── Strategy Presets — each optimized for a specific money-making approach ─── */
+/* ─── Strategy Presets ─── */
 const STRATEGIES: Record<string, {
   label: string; desc: string; icon: string; color: string; gradient: string;
   sort: (a: Recommendation, b: Recommendation) => number;
   diversified?: boolean;
-  /** When true, strategy sort is primary — masterSort (rarity-first) is NOT applied */
-  bypassMasterSort?: boolean;
-  /** When set, auto-filters items to this max median price */
   autoMaxPrice?: number;
-  filterHint?: string;
-  /** Override which price drives the gem budget. Default = median. Farmer = min (cheapest listing). */
+  /** Use min price instead of median for gem budget (Farmer/Budget buy cheapest listings) */
   gemPrice?: (r: Recommendation) => number;
+  /** Skip premium pinning — Budget/Farmer want ONLY cheap items */
+  noPremiumPin?: boolean;
 }> = {
   allstar: {
     label: 'All-Star', desc: 'Best overall value — balances price, demand, flip & rarity', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
-    bypassMasterSort: true,
-    sort: (a: Recommendation, b: Recommendation) => profitScore(b) - profitScore(a),
-    filterHint: 'Best overall money-makers across all price ranges',
+    sort: (a, b) => profitScore(b) - profitScore(a),
   },
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand, easy resell', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
-    bypassMasterSort: true,
-    // Farmer buys the CHEAPEST listing, so gem budget uses min price not median
     gemPrice: (r) => r.min ?? r.med ?? 0,
-    sort: (a: Recommendation, b: Recommendation) => {
-      // Farmers want: proven sold history + enough supply + not too expensive
-      // farmScore heavily weighted, price tier bonus, rarity as minor tiebreaker only
-      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.5;
-      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.5;
-      const aScore = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0) + rarityA;
-      const bScore = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0) + rarityB;
+    noPremiumPin: true,
+    sort: (a, b) => {
+      const aScore = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
+      const bScore = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0);
       return bScore - aScore;
     },
-    filterHint: 'Focus on proven sellers with volume',
   },
   flipper: {
     label: 'Flipper', desc: 'Buy low sell high — max spread & ROI', icon: '\uD83D\uDCB0', color: '#45d0ff', gradient: 'linear-gradient(135deg, #45d0ff22, #0099cc22)',
-    bypassMasterSort: true,
-    sort: (a: Recommendation, b: Recommendation) => {
-      // Flippers want: big price spread + proven ability to sell higher + liquidity
-      // flipScore & spreadScore primary, rarity as minor tiebreaker only
-      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.3;
-      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.3;
-      const aScore = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0) + rarityA;
-      const bScore = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0) + rarityB;
+    sort: (a, b) => {
+      const aScore = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0);
+      const bScore = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0);
       return bScore - aScore;
     },
-    filterHint: 'Look for underpriced listings to flip',
   },
   sniper: {
     label: 'Sniper', desc: 'Scarce high-value items — underpriced gems', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
-    bypassMasterSort: true,
-    sort: (a: Recommendation, b: Recommendation) => {
-      // Snipers want: high value + few listings (scarcity) + rarity as bonus
-      // Price is primary — a scarce $500 item beats a scarce $1 item
+    sort: (a, b) => {
       const aPrice = Math.min(10, Math.log10((a.med ?? 0) + 1) * 3);
       const bPrice = Math.min(10, Math.log10((b.med ?? 0) + 1) * 3);
-      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.3;
-      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.3;
-      const aScore = aPrice * 4 + (a.scarcityScore ?? 0) * 3 + (a.valueScore ?? 0) * 2 + ((a.soldCount ?? 0) > 0 ? 3 : 0) + rarityA;
-      const bScore = bPrice * 4 + (b.scarcityScore ?? 0) * 3 + (b.valueScore ?? 0) * 2 + ((b.soldCount ?? 0) > 0 ? 3 : 0) + rarityB;
+      const aScore = aPrice * 4 + (a.scarcityScore ?? 0) * 3 + (a.valueScore ?? 0) * 2 + ((a.soldCount ?? 0) > 0 ? 3 : 0);
+      const bScore = bPrice * 4 + (b.scarcityScore ?? 0) * 3 + (b.valueScore ?? 0) * 2 + ((b.soldCount ?? 0) > 0 ? 3 : 0);
       return bScore - aScore;
     },
-    filterHint: 'Auto-targets scarce high-value items',
   },
   whale: {
     label: 'Whale', desc: 'Premium high-value items only — $10+ market', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
-    autoMaxPrice: undefined,
-    sort: (a: Recommendation, b: Recommendation) => {
-      // Whales want: highest value items period. Price is THE signal.
-      // Rarity is a minor bonus, not the driver.
-      const rarityA = Math.max(0, 10 - getRarityWeight(a.rarity)) * 0.3;
-      const rarityB = Math.max(0, 10 - getRarityWeight(b.rarity)) * 0.3;
-      const aScore = (a.med ?? 0) * 1.0 + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3 + rarityA;
-      const bScore = (b.med ?? 0) * 1.0 + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3 + rarityB;
+    sort: (a, b) => {
+      const aScore = (a.med ?? 0) * 1.0 + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3;
+      const bScore = (b.med ?? 0) * 1.0 + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3;
       return bScore - aScore;
     },
-    filterHint: 'Focus on $10+ premium items',
   },
   trending: {
     label: 'Trending', desc: 'Hot items trending now — ride the wave', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
-    bypassMasterSort: true,
-    sort: (a: Recommendation, b: Recommendation) => {
-      // Trending: trendingListings is primary signal — rarity irrelevant, what's hot is hot
+    sort: (a, b) => {
       const aScore = (a.trendingListings || 0) * 5 + (a.soldCount || 0) * 2 + (a.score ?? 0) * 0.3;
       const bScore = (b.trendingListings || 0) * 5 + (b.soldCount || 0) * 2 + (b.score ?? 0) * 0.3;
       return bScore - aScore;
     },
-    filterHint: 'Currently trending on marketplace',
   },
   budget: {
     label: 'Budget', desc: 'Max value under $5 — high ROI for small capital', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
-    bypassMasterSort: true,
     autoMaxPrice: 5,
-    // Budget buys cheap items — use min price for gem budget
     gemPrice: (r) => r.min ?? r.med ?? 0,
-    sort: (a: Recommendation, b: Recommendation) => {
-      // Budget: value efficiency (score/price) is primary, rarity irrelevant
-      // Guard against zero/negative prices
+    noPremiumPin: true,
+    sort: (a, b) => {
       const aPrice = Math.max(a.med ?? 0, 0.01);
       const bPrice = Math.max(b.med ?? 0, 0.01);
       const aVal = ((a.score ?? 0) / aPrice) * ((a.soldCount ?? 0) > 0 ? 2 : 1);
       const bVal = ((b.score ?? 0) / bPrice) * ((b.soldCount ?? 0) > 0 ? 2 : 1);
       return bVal - aVal;
     },
-    filterHint: 'Auto-filters to items under $5',
   },
   diversified: {
     label: 'Diversified', desc: 'Balanced portfolio across all rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
-    bypassMasterSort: true,
-    sort: (a: Recommendation, b: Recommendation) => profitScore(b) - profitScore(a),
+    sort: (a, b) => profitScore(b) - profitScore(a),
     diversified: true,
-    filterHint: 'Auto-picks best from each rarity tier',
   },
 };
+
+const PREMIUM_THRESHOLD = 50;
 
 function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [activeStrategy, setActiveStrategy] = useState<string>('allstar');
@@ -172,12 +116,13 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [maxItems, setMaxItems] = useState('50');
   const [rarity, setRarity] = useState('all');
   const [excludedRarities, setExcludedRarities] = useState<Set<string>>(new Set());
-  const [generated, setGenerated] = useState<Recommendation[] | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [blInput, setBlInput] = useState('');
   const [removedItems, setRemovedItems] = useState<Set<string>>(new Set());
   const [minValueOverrides, setMinValueOverrides] = useState<Record<string, number>>({});
+
+  const strat = STRATEGIES[activeStrategy];
 
   const allRarities = useMemo(() => {
     if (!data?.recommendations) return [];
@@ -186,13 +131,9 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return Array.from(set).sort();
   }, [data]);
 
-  const PREMIUM_THRESHOLD = 50; // $50+ median = premium, always pinned at top
-
-  /* Global filter — premium items ($50+) always pass, filters only constrain the strategy pool.
-     Also applies autoMaxPrice from strategy (e.g. Budget caps at $5). */
+  /* ─── Filter recommendations ─── */
   const filtered = useMemo(() => {
     if (!data?.recommendations) return [];
-    const strat = STRATEGIES[activeStrategy];
     const lo = parseFloat(minPrice) || 0;
     const userHi = parseFloat(maxPrice) || 999999;
     const hi = strat?.autoMaxPrice ? Math.min(userHi, strat.autoMaxPrice) : userHi;
@@ -202,27 +143,20 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       if (!r || !r.name || bl.has(r.name.toLowerCase())) return false;
       if (rarity !== 'all' && r.rarity !== rarity) return false;
       if (excludedRarities.has(r.rarity)) return false;
-      // Premium items ($50+ median) always pass price filters — they're always-buy
-      const isPremium = (r.med ?? 0) >= PREMIUM_THRESHOLD;
-      if (isPremium) return (r.listings ?? 0) >= ml;
-      // Strategy pool: apply all filters including min/max price
+      // Premium items ($50+) always pass price filters UNLESS strategy disables premium pinning
+      if (!strat?.noPremiumPin && (r.med ?? 0) >= PREMIUM_THRESHOLD) {
+        return (r.listings ?? 0) >= ml;
+      }
       return (r.med ?? 0) >= lo && (r.med ?? 0) <= hi && (r.listings ?? 0) >= ml;
     });
-  }, [data, minPrice, maxPrice, minListings, rarity, excludedRarities, config.blacklisted, activeStrategy]);
+  }, [data, minPrice, maxPrice, minListings, rarity, excludedRarities, config.blacklisted, strat]);
 
-  /* Apply sorting — premium items ($50+ median) ALWAYS pinned at top of every strategy,
-     then remaining slots filled by strategy-specific sort. This ensures the auto-joiner
-     always grabs high-value finds regardless of which strategy is active. */
+  /* ─── Sort + cap results ─── */
   const results = useMemo(() => {
-    const strat = STRATEGIES[activeStrategy];
-    const stratSort = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
+    const sortFn = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
     const maxN = parseInt(maxItems) || 50;
-    const sortFn = strat?.bypassMasterSort
-      ? stratSort
-      : (a: Recommendation, b: Recommendation) => masterSort(a, b, stratSort);
 
     if (strat?.diversified) {
-      // Diversified: weighted allocation — rarer tiers get proportionally more slots
       const byRarity: Record<string, Recommendation[]> = {};
       for (const r of filtered) {
         if (!byRarity[r.rarity]) byRarity[r.rarity] = [];
@@ -230,58 +164,48 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       }
       const result: Recommendation[] = [];
       const rarities = Object.keys(byRarity).sort((a, b) => getRarityWeight(a) - getRarityWeight(b));
-
-      // Weight allocation: rarer tiers (lower weight) get more slots
       const totalWeight = rarities.reduce((sum, r) => sum + (11 - getRarityWeight(r)), 0);
       for (const rar of rarities) {
         const weight = 11 - getRarityWeight(rar);
         const slots = Math.max(2, Math.round((weight / Math.max(totalWeight, 1)) * maxN));
-        byRarity[rar].sort(stratSort);
+        byRarity[rar].sort(sortFn);
         result.push(...byRarity[rar].slice(0, slots));
       }
       const seen = new Set<string>();
-      const deduped = result.filter(r => {
-        if (seen.has(r.name)) return false;
-        seen.add(r.name);
-        return true;
-      });
-      return deduped.sort(stratSort).slice(0, maxN);
+      return result.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; })
+        .sort(sortFn).slice(0, maxN);
     }
 
-    // Split into premium (always-buy) and strategy picks
-    const premium = filtered.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
-    const strategyPool = filtered.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
+    // Premium pinning: $50+ items at top (unless noPremiumPin)
+    if (!strat?.noPremiumPin) {
+      const premium = filtered.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
+      const pool = filtered.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
+      premium.sort((a, b) => (b.med ?? 0) - (a.med ?? 0));
+      pool.sort(sortFn);
+      const seen = new Set<string>();
+      const combined: Recommendation[] = [];
+      for (const r of premium) { if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); } }
+      for (const r of pool) { if (combined.length >= maxN) break; if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); } }
+      return combined.slice(0, maxN);
+    }
 
-    // Sort premium by price descending (most valuable first)
-    premium.sort((a, b) => (b.med ?? 0) - (a.med ?? 0));
-    // Sort strategy pool by strategy-specific sort
-    strategyPool.sort(sortFn);
-
-    // Combine: premium pinned at top, then strategy picks fill remaining slots
+    // No premium pinning — just sort by strategy
+    const sorted = [...filtered].sort(sortFn);
     const seen = new Set<string>();
-    const combined: Recommendation[] = [];
-    for (const r of premium) {
-      if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); }
-    }
-    for (const r of strategyPool) {
-      if (combined.length >= maxN) break;
-      if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); }
-    }
-    return combined.slice(0, maxN);
-  }, [filtered, activeStrategy, maxItems]);
+    return sorted.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; }).slice(0, maxN);
+  }, [filtered, strat, maxItems]);
 
-  // Filter out removed items from display
+  /* ─── Display results (with user removals) ─── */
   const displayResults = useMemo(() => results.filter(r => !removedItems.has(r.name)), [results, removedItems]);
 
-  // Strategy-aware min_value: uses strategy's gemPrice override if defined
+  /* ─── Strategy-aware min_value ─── */
   const getMinValue = (r: Recommendation) => {
     if (minValueOverrides[r.name] != null) return minValueOverrides[r.name];
-    const strat = STRATEGIES[activeStrategy];
     if (strat?.gemPrice) return smartMinValue(r, strat.gemPrice(r));
     return smartMinValue(r);
   };
 
-  /* Build config from results and immediately download */
+  /* ─── Generate config + download ─── */
   const generateAndDownload = () => {
     const wl: WLItem[] = displayResults.map((r: Recommendation) => {
       if (!r?.name) return null as any;
@@ -290,7 +214,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         priority: computePriority(r),
         min_value: getMinValue(r),
       };
-      // Compute mutation overrides for this pet
       const advisory = getMutationAdvisory(r);
       const overrides = advisory.filter(a => a?.needsOverride);
       if (overrides.length > 0) {
@@ -303,17 +226,13 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       }
       return item;
     }).filter((w: WLItem | null) => w !== null);
-    const genConfig: Config = {
-      whitelisted: wl,
-      blacklisted: config.blacklisted,
-      version: '1.0',
-    };
-    setGenerated(results);
+
+    const genConfig: Config = { whitelisted: wl, blacklisted: config.blacklisted, version: '1.0' };
     setConfig(genConfig);
-    downloadConfigJSON(genConfig, showToast, data.recommendations);
+    downloadConfigJSON(genConfig, showToast);
   };
 
-  /* Save to DB */
+  /* ─── Save to DB ─── */
   const saveConfig = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -329,33 +248,24 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       } else {
         showToast(`Save failed: ${result.error || 'unknown error'}`);
       }
-    } catch { showToast('Save failed \u2014 network error'); }
+    } catch { showToast('Save failed — network error'); }
     finally { setIsSaving(false); }
   };
 
+  /* ─── Import JSON ─── */
   const importConfig = () => {
     const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
+    input.type = 'file'; input.accept = '.json';
     input.onchange = (e: Event) => {
-      const target = e.target as HTMLInputElement;
-      const file = target.files?.[0];
+      const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
-      if (file.size > 5 * 1024 * 1024) {
-        showToast('File too large (max 5MB)');
-        return;
-      }
+      if (file.size > 5 * 1024 * 1024) { showToast('File too large (max 5MB)'); return; }
       const reader = new FileReader();
       reader.onload = (ev) => {
         try {
           const imported = JSON.parse(ev.target?.result as string);
-          if (!imported || typeof imported !== 'object') {
-            showToast('Invalid config: not a valid JSON object');
-            return;
-          }
-          if (!imported.whitelisted || !Array.isArray(imported.whitelisted)) {
-            showToast('Invalid config: missing whitelisted array');
-            return;
+          if (!imported?.whitelisted || !Array.isArray(imported.whitelisted)) {
+            showToast('Invalid config: missing whitelisted array'); return;
           }
           const wl: WLItem[] = imported.whitelisted.map((w: any, i: number) => {
             const pet_name = (w?.pet_name || w?.name || '').toString().trim();
@@ -374,9 +284,9 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           const bl: string[] = Array.isArray(imported.blacklisted)
             ? imported.blacklisted.filter((b: unknown) => typeof b === 'string' && (b as string).trim().length > 0).map((b: string) => b.trim())
             : [];
-          setConfig({ whitelisted: wl, blacklisted: bl, version: typeof imported.version === 'string' ? imported.version : '1.0' });
-          showToast(`Imported ${wl.length} items from config`);
-        } catch (e) { showToast('Failed to parse config file: ' + (e instanceof Error ? e.message : 'unknown error')); }
+          setConfig({ whitelisted: wl, blacklisted: bl, version: '1.0' });
+          showToast(`Imported ${wl.length} items`);
+        } catch (e) { showToast('Failed to parse: ' + (e instanceof Error ? e.message : 'unknown')); }
       };
       reader.readAsText(file);
     };
@@ -384,115 +294,64 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   };
 
   const addToBlacklist = (name: string) => {
-    if (!name || typeof name !== 'string') return;
-    const trimmed = name.trim();
-    if (trimmed.length === 0) return;
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
     if (config.blacklisted.some((b: string) => b.toLowerCase() === trimmed.toLowerCase())) {
-      showToast(`"${trimmed}" is already blacklisted`);
-      return;
+      showToast(`"${trimmed}" already blacklisted`); return;
     }
     setConfig((c: Config) => ({ ...c, blacklisted: [...c.blacklisted, trimmed] }));
-    showToast(`Blacklisted "${trimmed}"`);
   };
 
-  const strat = STRATEGIES[activeStrategy];
+  const switchStrategy = (id: string) => {
+    setActiveStrategy(id);
+    setRemovedItems(new Set());
+    setMinValueOverrides({});
+  };
 
-  // Pre-compute advisories for display results
-  const advisoryMap = useMemo(() => {
-    const map = new Map<string, MutationAdvisory[]>();
-    for (const r of displayResults) {
-      map.set(r.name, getMutationAdvisory(r));
-    }
-    return map;
-  }, [displayResults]);
-
-  const totalOverrides = useMemo(() => {
-    let count = 0;
-    for (const advisories of advisoryMap.values()) {
-      count += advisories.filter(a => a.needsOverride).length;
-    }
-    return count;
-  }, [advisoryMap]);
-
-  // Validation summary — explains what the config generator did and why
-  const configSummary = useMemo(() => {
-    if (displayResults.length === 0) return null;
-    const rarityGroups: Record<string, number> = {};
-    let noSoldData = 0;
-    let noListings = 0;
-    let premiumAutoIncluded = 0;
-    const premiumRarities = new Set(['OG', 'Admin', 'Brainrot God']);
-
-    for (const r of displayResults) {
-      const rar = r.rarity || 'Unknown';
-      rarityGroups[rar] = (rarityGroups[rar] || 0) + 1;
-      if ((r.soldCount ?? 0) === 0) noSoldData++;
-      if ((r.listings ?? 0) === 0) noListings++;
-      if (premiumRarities.has(rar)) premiumAutoIncluded++;
-    }
-
-    const sortedRarities = Object.entries(rarityGroups)
-      .sort(([a], [b]) => getRarityWeight(a) - getRarityWeight(b));
-
-    const hints: string[] = [];
-    if (premiumAutoIncluded > 0) hints.push(`${premiumAutoIncluded} premium rarity items (always worth sniping)`);
-    if (noSoldData > 0) hints.push(`${noSoldData} items with no sold history (priority based on rarity + listings)`);
-    if (noListings > 0) hints.push(`${noListings} items with no active listings (may be delisted)`);
-    if (strat?.autoMaxPrice) hints.push(`Auto-filtered to items under $${strat.autoMaxPrice}`);
-    if (strat?.bypassMasterSort) hints.push('Sorted by strategy score (rarity is a minor factor)');
-    else hints.push('Sorted by rarity first, then strategy score within each tier');
-
-    return { sortedRarities, hints };
-  }, [displayResults, strat]);
-
-  // Data freshness check — show when last scrape ran, not misleading coverage %
+  /* ─── Data freshness ─── */
   const dataFreshness = useMemo(() => {
     if (!data?.meta) return null;
     const total = data.meta.totalListings || 0;
     const unique = data.meta.uniqueBrainrots || 0;
-    const combos = data.meta.uniqueCombos || 0;
     const runs = data.meta.scrapeRuns || [];
     const lastCompleted = runs.find((r: any) => r.status === 'completed');
     const lastScrapeAt = lastCompleted?.completed_at || lastCompleted?.started_at || null;
     const hoursAgo = lastScrapeAt ? Math.floor((Date.now() - new Date(lastScrapeAt).getTime()) / 3600000) : null;
     const isStale = hoursAgo === null || hoursAgo > 24;
-    return { total, unique, combos, hoursAgo, isStale };
+    return { total, unique, hoursAgo, isStale };
   }, [data]);
 
   return (
     <div className="d-flex flex-col gap-4">
 
-      {/* ──── Data freshness indicator ──── */}
+      {/* ─── Data freshness ─── */}
       {dataFreshness && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: dataFreshness.isStale ? 'rgba(245, 158, 11, 0.1)' : 'rgba(0, 214, 143, 0.08)', border: `1px solid ${dataFreshness.isStale ? 'rgba(245, 158, 11, 0.3)' : 'rgba(0, 214, 143, 0.2)'}` }}>
+        <div style={{ padding: '8px 14px', borderRadius: 8, background: dataFreshness.isStale ? 'rgba(245, 158, 11, 0.1)' : 'rgba(0, 214, 143, 0.08)', border: `1px solid ${dataFreshness.isStale ? 'rgba(245, 158, 11, 0.3)' : 'rgba(0, 214, 143, 0.2)'}` }}>
           <div className="d-flex items-center gap-2">
-            <span className="text-lg">{dataFreshness.isStale ? '\u26A0\uFE0F' : '\u2705'}</span>
             <div>
-              <div className="text-sm fw-600" style={{ color: dataFreshness.isStale ? '#f59e0b' : '#00d68f' }}>
+              <span className="text-sm fw-600" style={{ color: dataFreshness.isStale ? '#f59e0b' : '#00d68f' }}>
                 {dataFreshness.isStale ? 'Data may be stale' : 'Data is fresh'}
-              </div>
-              <div className="text-xs text-muted">
-                {dataFreshness.total.toLocaleString()} active listings · {dataFreshness.unique} pets · {dataFreshness.combos} combos
-                {dataFreshness.hoursAgo !== null ? ` · Updated ${dataFreshness.hoursAgo}h ago` : ''}
-              </div>
+              </span>
+              <span className="text-xs text-muted" style={{ marginLeft: 8 }}>
+                {dataFreshness.total.toLocaleString()} listings · {dataFreshness.unique} pets
+                {dataFreshness.hoursAgo !== null ? ` · ${dataFreshness.hoursAgo}h ago` : ''}
+              </span>
             </div>
           </div>
         </div>
       )}
 
-      {/* ──── Step 1: Pick Strategy (primary action) ──── */}
+      {/* ─── Strategy picker ─── */}
       <div>
         <div className="section-header">1. Pick a Strategy</div>
         <div className="grid-strategies stagger-in">
           {Object.entries(STRATEGIES).map(([id, s]) => {
             const isActive = activeStrategy === id;
             return (
-              <div key={id} onClick={() => { setActiveStrategy(id); setRemovedItems(new Set()); setMinValueOverrides({}); }} role="button" tabIndex={0} aria-pressed={isActive} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setActiveStrategy(id), setRemovedItems(new Set()), setMinValueOverrides({}))}
+              <div key={id} onClick={() => switchStrategy(id)} role="button" tabIndex={0} aria-pressed={isActive}
+                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), switchStrategy(id))}
                 className={`strategy-card ${isActive ? 'active' : ''}`}
-                style={{
-                  background: isActive ? s.gradient : undefined,
-                  borderColor: isActive ? s.color : undefined,
-                }}>
+                style={{ background: isActive ? s.gradient : undefined, borderColor: isActive ? s.color : undefined }}>
                 <div className="d-flex items-center gap-2">
                   <span className="text-2xl">{s.icon}</span>
                   <div>
@@ -506,13 +365,12 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         </div>
       </div>
 
-      {/* ──── Filters (collapsed by default) ──── */}
+      {/* ─── Filters (collapsed) ─── */}
       <div className="filter-panel">
         <div className="filter-panel-header" onClick={() => setShowFilters(!showFilters)}>
           <div className="d-flex items-center gap-2">
-            <span className="text-md fw-600 text-sub">Filters & Options</span>
+            <span className="text-md fw-600 text-sub">Filters</span>
             <span className="text-sm text-muted">{filtered.length} pets match</span>
-            {excludedRarities.size > 0 && <span className="pill pill-warn">{excludedRarities.size} rarity excluded</span>}
             {config.blacklisted.length > 0 && <span className="pill pill-warn">{config.blacklisted.length} blacklisted</span>}
           </div>
           <span className={`text-md text-muted animate-chevron${showFilters ? ' open' : ''}`}>{'\u25BC'}</span>
@@ -522,15 +380,15 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
             <div className="grid-filters">
               <div>
                 <label className="config-label">Min Median ($)</label>
-                <input className="input" type="number" value={minPrice} onChange={e => setMinPrice(Math.max(0, parseFloat(e.target.value) || 0).toString())} placeholder="0" min="0" />
+                <input className="input" type="number" value={minPrice} onChange={e => setMinPrice(Math.max(0, parseFloat(e.target.value) || 0).toString())} min="0" />
               </div>
               <div>
                 <label className="config-label">Max Median ($)</label>
-                <input className="input" type="number" value={maxPrice} onChange={e => setMaxPrice(Math.max(0, parseFloat(e.target.value) || 99999).toString())} placeholder="99999" min="0" />
+                <input className="input" type="number" value={maxPrice} onChange={e => setMaxPrice(Math.max(0, parseFloat(e.target.value) || 99999).toString())} min="0" />
               </div>
               <div>
                 <label className="config-label">Min Listings</label>
-                <input className="input" type="number" value={minListings} onChange={e => setMinListings(Math.max(1, parseInt(e.target.value) || 1).toString())} placeholder="1" min="1" />
+                <input className="input" type="number" value={minListings} onChange={e => setMinListings(Math.max(1, parseInt(e.target.value) || 1).toString())} min="1" />
               </div>
               <div>
                 <label className="config-label">Rarity</label>
@@ -541,7 +399,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
               </div>
               <div>
                 <label className="config-label">Max Items</label>
-                <input className="input" type="number" value={maxItems} onChange={e => setMaxItems(Math.max(1, parseInt(e.target.value) || 50).toString())} placeholder="50" min="1" />
+                <input className="input" type="number" value={maxItems} onChange={e => setMaxItems(Math.max(1, parseInt(e.target.value) || 50).toString())} min="1" />
               </div>
             </div>
 
@@ -553,29 +411,18 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                   {excludedRarities.size > 0 && <button type="button" className="btn btn-sm" onClick={() => setExcludedRarities(new Set())}>Clear</button>}
                 </div>
                 <div className="d-flex flex-wrap gap-1">
-                  {allRarities.map(r => {
-                    const isExcluded = excludedRarities.has(r);
-                    return (
-                      <button key={r} type="button"
-                        className={`btn btn-sm ${isExcluded ? 'btn-danger' : ''}`}
-                        onClick={() => {
-                          setExcludedRarities(prev => {
-                            const next = new Set(prev);
-                            if (next.has(r)) next.delete(r); else next.add(r);
-                            return next;
-                          });
-                        }}
-                        aria-pressed={isExcluded}
-                      >
-                        {isExcluded ? '\u2715 ' : ''}{r}
-                      </button>
-                    );
-                  })}
+                  {allRarities.map(r => (
+                    <button key={r} type="button" className={`btn btn-sm ${excludedRarities.has(r) ? 'btn-danger' : ''}`}
+                      onClick={() => setExcludedRarities(prev => { const next = new Set(prev); if (next.has(r)) next.delete(r); else next.add(r); return next; })}
+                      aria-pressed={excludedRarities.has(r)}>
+                      {excludedRarities.has(r) ? '\u2715 ' : ''}{r}
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* Blacklist inline */}
+            {/* Blacklist */}
             <div>
               <div className="d-flex justify-between items-center mb-2">
                 <span className="text-sm fw-600 text-red">Blacklist</span>
@@ -583,15 +430,15 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
               </div>
               <div className="d-flex gap-2 mb-2">
                 <input className="input max-w-200" placeholder="Add name..." value={blInput} onChange={e => setBlInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { addToBlacklist(blInput.trim()); setBlInput(''); } }} />
-                <button type="button" className="btn btn-sm" onClick={() => { addToBlacklist(blInput.trim()); setBlInput(''); }}>Add</button>
+                  onKeyDown={(e) => { if (e.key === 'Enter') { addToBlacklist(blInput); setBlInput(''); } }} />
+                <button type="button" className="btn btn-sm" onClick={() => { addToBlacklist(blInput); setBlInput(''); }}>Add</button>
               </div>
               {config.blacklisted.length > 0 && (
                 <div className="d-flex flex-wrap gap-1">
                   {config.blacklisted.map((name: string) => (
                     <div key={name} className="blacklist-chip">
                       <span className="text-red">{name}</span>
-                      <button type="button" onClick={() => setConfig((c: Config) => ({ ...c, blacklisted: c.blacklisted.filter((n: string) => n !== name) }))} aria-label={`Remove ${name} from blacklist`}>{'\u2715'}</button>
+                      <button type="button" onClick={() => setConfig((c: Config) => ({ ...c, blacklisted: c.blacklisted.filter((n: string) => n !== name) }))} aria-label={`Remove ${name}`}>{'\u2715'}</button>
                     </div>
                   ))}
                 </div>
@@ -605,35 +452,29 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         )}
       </div>
 
-      {/* ──── Preview + Download ──── */}
+      {/* ─── Results table + download ─── */}
       <div className="preview-container">
         <div className="preview-header" style={{ background: strat?.gradient || undefined }}>
           <div className="d-flex items-center gap-2 flex-wrap">
             <span className="text-xl">{strat?.icon}</span>
             <span className="fw-700 text-lg" style={{ color: strat?.color || 'var(--text)' }}>{strat?.label}</span>
             <span className="text-md text-sub">{displayResults.length} items</span>
-            {totalOverrides > 0 && (
-              <span className="pill tag-warn">
-                {totalOverrides} override{totalOverrides > 1 ? 's' : ''}
-              </span>
-            )}
           </div>
           <div className="d-flex gap-2 flex-wrap">
-            <button type="button" className="btn-cta" onClick={generateAndDownload} disabled={results.length === 0}>
+            <button type="button" className="btn-cta" onClick={generateAndDownload} disabled={displayResults.length === 0}>
               Download Config
             </button>
             <button type="button" className="btn btn-sm" onClick={saveConfig} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save to DB'}</button>
           </div>
         </div>
+
         {displayResults.length === 0 ? (
-          <div className="empty-state">
-            No items match your filters. Try widening the price range or lowering min listings.
-          </div>
+          <div className="empty-state">No items match your filters.</div>
         ) : (
           <div className="preview-body">
             {removedItems.size > 0 && (
               <div className="d-flex justify-between items-center" style={{ padding: '6px 12px', background: 'rgba(245, 158, 11, 0.08)', borderRadius: 6, marginBottom: 8 }}>
-                <span className="text-xs text-muted">{removedItems.size} item{removedItems.size > 1 ? 's' : ''} removed</span>
+                <span className="text-xs text-muted">{removedItems.size} removed</span>
                 <button type="button" className="btn btn-sm" onClick={() => setRemovedItems(new Set())} style={{ fontSize: '0.7rem' }}>Undo All</button>
               </div>
             )}
@@ -648,23 +489,19 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                 <tbody role="rowgroup">
                   {displayResults.map((r: Recommendation, i: number) => {
                     if (!r?.name) return null;
-                    const currentMinVal = getMinValue(r);
                     return (
                       <tr key={`config-${r.name}`} role="row">
                         <td className="text-muted text-mono">{i + 1}</td>
                         <td><ImageThumb src={r.imageUrl || ''} size={22} /></td>
-                        <td className="fw-600">{r.name || '\u2014'}</td>
+                        <td className="fw-600">{r.name}</td>
                         <td><RarityBadge rarity={r.rarity || ''} /></td>
                         <td className="text-green text-mono">{fmtPrice(r.min ?? 0)}</td>
                         <td className="text-mono">{fmtPrice(r.med ?? 0)}</td>
                         <td className="text-muted">{r.soldCount ?? 0}</td>
                         <td>
                           <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.75rem', padding: '2px 4px', minWidth: 80 }}
-                            value={currentMinVal}
-                            onChange={e => {
-                              const val = parseInt(e.target.value);
-                              setMinValueOverrides(prev => ({ ...prev, [r.name]: val }));
-                            }}>
+                            value={getMinValue(r)}
+                            onChange={e => setMinValueOverrides(prev => ({ ...prev, [r.name]: parseInt(e.target.value) }))}>
                             <option value={1000000}>1M</option>
                             <option value={50000000}>50M</option>
                             <option value={100000000}>100M</option>
@@ -677,7 +514,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                         </td>
                         <td>
                           <button type="button" className="btn btn-sm" onClick={() => setRemovedItems(prev => new Set([...prev, r.name]))}
-                            style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#ff4757' }} title="Remove from config">{'\u2715'}</button>
+                            style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#ff4757' }} title="Remove">{'\u2715'}</button>
                         </td>
                       </tr>
                     );
@@ -688,44 +525,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           </div>
         )}
       </div>
-
-      {/* ──── Config Summary — why these items were picked ──── */}
-      {configSummary && displayResults.length > 0 && (
-        <div className="config-summary" style={{ padding: '12px 16px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-          <div className="text-sm fw-600 text-sub mb-2">Config Breakdown</div>
-          <div className="d-flex flex-wrap gap-2 mb-2">
-            {configSummary.sortedRarities.map(([rar, count]) => (
-              <span key={rar} className="pill" style={{ fontSize: '0.75rem' }}>
-                {rar}: {count}
-              </span>
-            ))}
-          </div>
-          <div className="d-flex flex-col gap-1">
-            {configSummary.hints.map((hint, i) => (
-              <div key={i} className="text-xs text-muted">{'\u2022'} {hint}</div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ──── Generated config info ──── */}
-      {generated && (
-        <div className="config-success">
-          <div className="d-flex justify-between items-center flex-wrap gap-2">
-            <div>
-              <div className="text-lg fw-700 text-green mb-1">Config Generated</div>
-              <div className="text-sm text-muted">
-                {config.whitelisted.length} items · {config.blacklisted.length} blacklisted ·
-                Format: {'{'}blacklisted, whitelisted: [{'{'}pet_name, priority, min_value, mutations{'}'}], version{'}'}
-              </div>
-            </div>
-            <div className="d-flex gap-2">
-              <button type="button" className="btn btn-sm" onClick={() => downloadConfigJSON(config, showToast, data.recommendations)}>Download Again</button>
-              <button type="button" className="btn-cta btn-sm" onClick={generateAndDownload}>Re-Generate</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
