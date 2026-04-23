@@ -99,7 +99,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     if (!data?.recommendations) return [];
     const set = new Set<string>();
     data.recommendations.forEach((r: Recommendation) => { if (r?.rarity) set.add(r.rarity); });
-    return Array.from(set).sort();
+    return Array.from(set).sort((a, b) => getRarityWeight(a) - getRarityWeight(b));
   }, [data]);
 
   /* ─── Filter (mutation-aware) ─── */
@@ -125,7 +125,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       if (maxMutPrice > 0 && maxMutPrice >= lo && maxMutPrice <= hi) return (r.listings ?? 0) >= ml;
       return price >= lo && price <= hi && (r.listings ?? 0) >= ml;
     });
-  }, [data, filterMinPrice, filterMaxPrice, filterPriceField, minListings, minSold, rarity, excludedRarities, config.blacklisted, strat]);
+  }, [data, filterMinPrice, filterMaxPrice, filterPriceField, minListings, minSold, rarity, excludedRarities, config.blacklisted]);
 
   /* ─── Sort (premium pinned, strategy for the rest) ─── */
   const results = useMemo(() => {
@@ -151,7 +151,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     if (quickFilters.has('hasMutations')) list = list.filter(r => getMutationSummary(r).count > 0);
     if (quickFilters.has('tierS')) list = list.filter(r => r.tier === 'S');
     if (quickFilters.has('tierA')) list = list.filter(r => r.tier === 'S' || r.tier === 'A');
-    if (quickFilters.has('premium')) list = list.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
+    if (quickFilters.has('premium')) list = list.filter(r => Math.max(r.med ?? 0, getMaxMutationPrice(r)) >= PREMIUM_THRESHOLD);
     // Table search
     if (tableSearch.trim()) {
       const q = tableSearch.toLowerCase().trim();
@@ -172,11 +172,10 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     const cheap = displayResults.filter(r => (r.med ?? 0) < 5);
     const totalSold = displayResults.reduce((s, r) => s + (r.soldCount ?? 0), 0);
     const totalValue = displayResults.reduce((s, r) => s + (r.med ?? 0), 0);
-    const withMutations = displayResults.filter(r => getMutationSummary(r).count > 0).length;
     const mutOverrides = displayResults.reduce((s, r) => s + getMutationAdvisory(r, gemMode).filter(a => a.needsOverride).length, 0);
     const tierCounts = { S: 0, A: 0, B: 0, C: 0, D: 0 };
     displayResults.forEach(r => { if (r.tier in tierCounts) tierCounts[r.tier as keyof typeof tierCounts]++; });
-    return { premium: premium.length, mid: mid.length, cheap: cheap.length, totalSold, totalValue, withMutations, mutOverrides, tierCounts, total: displayResults.length };
+    return { premium: premium.length, mid: mid.length, cheap: cheap.length, totalSold, totalValue, mutOverrides, tierCounts, total: displayResults.length };
   }, [displayResults, gemMode]);
 
   /* ─── Generate + download ─── */

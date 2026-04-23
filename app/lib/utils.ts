@@ -175,8 +175,8 @@ export function smartMinValue(
   if (!rec) return 1000000;
 
   // Use medianPrice (from Brainrot) or med (from Recommendation)
-  const med = rec.med ?? (rec as any).medianPrice ?? 0;
-  const min = rec.min ?? (rec as any).minPrice ?? 0;
+  const med = rec.med ?? rec.medianPrice ?? 0;
+  const min = rec.min ?? rec.minPrice ?? 0;
 
   // If no price data, default to 1M (floor)
   if (med <= 0 && min <= 0) return 1000000;
@@ -289,6 +289,10 @@ export function getMutationAdvisory(rec: Recommendation, gemMode: GemMode = 'def
   // Use 0.01 as floor to prevent division-by-zero in priceRatio.
   if (baseMed <= 0) baseMed = 0.01;
 
+  // Compute the base item's gem budget so we can skip mutations that match it.
+  // If base is $440 → 1M, and Bloodrot mutation is also $400 → 1M, no override needed.
+  const baseGemBudget = smartMinValue(rec, undefined, gemMode);
+
   const advisories: MutationAdvisory[] = [];
   const byMut: Record<string, typeof rec.bestCombos> = {};
   for (const c of rec.bestCombos) {
@@ -301,7 +305,11 @@ export function getMutationAdvisory(rec: Recommendation, gemMode: GemMode = 'def
   for (const [mut, combos] of Object.entries(byMut)) {
     if (combos.length === 0) continue;
     const totalListings = combos.reduce((s, c) => s + (c.n || 0), 0);
-    const avgMed = combos.reduce((s, c) => s + (c.med || 0), 0) / combos.length;
+    // Only average combos that have actual price data — don't dilute with zeros
+    const pricedCombos = combos.filter(c => (c.med || 0) > 0);
+    const avgMed = pricedCombos.length > 0
+      ? pricedCombos.reduce((s, c) => s + (c.med || 0), 0) / pricedCombos.length
+      : 0;
     const priceRatio = baseMed > 0 ? avgMed / baseMed : 1;
     if (!isFinite(priceRatio) || isNaN(priceRatio)) continue;
     const multiplier = MUTATION_MULTIPLIERS[mut] || 0;
@@ -318,10 +326,10 @@ export function getMutationAdvisory(rec: Recommendation, gemMode: GemMode = 'def
       priceRatio: Math.round(priceRatio * 10) / 10,
       listings: totalListings,
       recommendedOverride,
-      // Include ALL mutations with listings — mutations are fundamentally
-      // different items that need their own gem budgets, not just overrides
-      // at extreme price ratios. Even a 1.2x mutation should have its own budget.
-      needsOverride: totalListings >= 1,
+      // Only override when mutation gem budget DIFFERS from base gem budget.
+      // If base is already 1M and mutation is also 1M, the override is noise.
+      // Overrides exist to tell the bot "use a different gem budget for this mutation."
+      needsOverride: totalListings >= 1 && recommendedOverride !== baseGemBudget,
     });
   }
 
