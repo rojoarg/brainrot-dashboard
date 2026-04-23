@@ -44,7 +44,6 @@ const STRATEGIES: Record<string, {
   },
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
-    gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
     defaults: { priceField: 'med', minPrice: '2' },
     sort: (a, b) => {
@@ -87,7 +86,6 @@ const STRATEGIES: Record<string, {
   budget: {
     label: 'Budget', desc: 'Under $5, high ROI', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
     autoMaxPrice: 5,
-    gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
     defaults: { priceField: 'med', minPrice: '1', maxPrice: '5' },
     sort: (a, b) => {
@@ -311,7 +309,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return { total: data.meta.totalListings || 0, unique: data.meta.uniqueBrainrots || 0, hoursAgo, isStale: hoursAgo === null || hoursAgo > 24 };
   }, [data]);
 
-  const priceFieldLabel = filterPriceField === 'min' ? 'Min' : filterPriceField === 'max' ? 'Max' : 'Median';
+  const priceFieldLabel = filterPriceField === 'min' ? 'min price' : filterPriceField === 'max' ? 'max price' : 'median';
 
   return (
     <div className="d-flex flex-col gap-4">
@@ -376,11 +374,11 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                 </select>
               </div>
               <div>
-                <label className="config-label">{priceFieldLabel} From ($)</label>
+                <label className="config-label">From $ ({priceFieldLabel})</label>
                 <input className="input" type="number" value={filterMinPrice} onChange={e => setFilterMinPrice(Math.max(0, parseFloat(e.target.value) || 0).toString())} min="0" />
               </div>
               <div>
-                <label className="config-label">{priceFieldLabel} To ($)</label>
+                <label className="config-label">To $ ({priceFieldLabel})</label>
                 <input className="input" type="number" value={filterMaxPrice} onChange={e => setFilterMaxPrice(Math.max(0, parseFloat(e.target.value) || 99999).toString())} min="0" />
               </div>
               <div>
