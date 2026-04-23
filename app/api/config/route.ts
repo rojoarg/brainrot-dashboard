@@ -55,9 +55,10 @@ function sanitizePetName(name: string): string {
 
 export async function POST(request: Request) {
   try {
-    // Auth: require API key or CRON_SECRET to prevent unauthorized config writes
+    // Auth: only require auth if CONFIG_SECRET is explicitly set.
+    // CRON_SECRET is for the scraper — config saves from the browser should work without it.
     const authHeader = request.headers.get('authorization');
-    const configSecret = process.env.CONFIG_SECRET || process.env.CRON_SECRET;
+    const configSecret = process.env.CONFIG_SECRET;
     if (configSecret) {
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
       if (bearerToken !== configSecret) {

@@ -16,17 +16,16 @@ export const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
  */
 export function computePriority(rec: { rarity?: string; score?: number; soldCount?: number; med?: number } | null | undefined): number {
   if (!rec) return 50;
-  const med = rec.med ?? 0;
+  const med = isFinite(rec.med ?? 0) ? (rec.med ?? 0) : 0;
   // Price contributes 0-60 (inverted: higher price = lower number = higher priority)
-  // $500+ → 0, $200→10, $100→15, $50→25, $20→35, $10→40, $5→45, $2→50, <$2→60
   const priceComponent = med >= 500 ? 0 : med >= 200 ? 10 : med >= 100 ? 15
     : med >= 50 ? 25 : med >= 20 ? 35 : med >= 10 ? 40
     : med >= 5 ? 45 : med >= 2 ? 50 : 60;
   // Score contributes 0-20 (inverted: higher score = lower priority number)
-  const score = rec.score ?? 0;
+  const score = isFinite(rec.score ?? 0) ? (rec.score ?? 0) : 0;
   const scoreComponent = Math.max(0, 20 - Math.min(20, score * 0.2));
   // Sold count contributes 0-10 (more sold = lower priority number)
-  const sold = rec.soldCount ?? 0;
+  const sold = isFinite(rec.soldCount ?? 0) ? (rec.soldCount ?? 0) : 0;
   const soldComponent = Math.max(0, 10 - Math.min(10, Math.log2(sold + 1) * 2));
   // Rarity is just a minor tiebreaker (0-10)
   const rarityW = getRarityWeight(rec.rarity || '');
@@ -109,7 +108,7 @@ export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; 
   if (med <= 0 && min <= 0) return 1000000;
 
   // Allow strategy to override which price drives the gem budget
-  // e.g. Farmer uses min price (buys cheapest listings)
+  // e.g. Farmer uses p25 (25th percentile — realistic cheap price, avoids outlier lowballs)
   const price = priceOverride ?? (med > 0 ? med : min);
 
   // Simple human logic:

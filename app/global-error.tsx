@@ -19,6 +19,12 @@ export default function GlobalError({
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Error — Brainrot Market Intelligence</title>
+        <style>{`
+          @media (prefers-color-scheme: light) {
+            body { background: #f8f8fa !important; color: #18181b !important; }
+            body p { color: #71717a !important; }
+          }
+        `}</style>
       </head>
       <body
         style={{
@@ -39,7 +45,7 @@ export default function GlobalError({
           <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Critical Error</h2>
           <p style={{ color: '#888', marginBottom: 24 }}>
             The dashboard encountered a fatal error. Please try refreshing.
-            {error.digest && <span style={{ display: 'block', fontSize: 11, marginTop: 8, color: '#555' }}>Reference: {error.digest}</span>}
+            {error.digest && <span style={{ display: 'block', fontSize: 11, marginTop: 8, opacity: 0.5 }}>Reference: {error.digest}</span>}
           </p>
           <button
             onClick={reset}

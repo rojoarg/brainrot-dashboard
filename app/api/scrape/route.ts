@@ -226,13 +226,14 @@ export async function GET(request: Request) {
     }
 
     // Verify there's still a running scrape run (chain integrity check)
+    // Use maybeSingle() to avoid throwing when no rows found
     const { data: activeRun } = await supabase
       .from('brainrot_scrape_runs')
       .select('id')
       .eq('status', 'running')
       .order('started_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (!activeRun) {
       return NextResponse.json({ error: 'No active scrape run -- chain broken', step: `batch-${batchNum}` }, { status: 409 });
@@ -385,7 +386,7 @@ async function scrapeSegment(chunkNum: number) {
     .eq('status', 'running')
     .order('started_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (runningRun) {
     // Get real staging count from DB (accurate after upsert deduplication)
@@ -414,14 +415,14 @@ async function scrapeSegment(chunkNum: number) {
 // âââ FINALIZE: Wait for all batches, then atomic swap stagingâlive âââ
 async function finalizeScrape() {
   try {
-  // Find running run
+  // Find running run (maybeSingle to avoid throw when no rows)
   const { data: runningRun } = await supabase
     .from('brainrot_scrape_runs')
     .select('id, segments_completed, total_segments')
     .eq('status', 'running')
     .order('started_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   // Wait for parallel batches to finish (fire-before-scrape means some may still be running)
   if (runningRun) {
@@ -434,7 +435,7 @@ async function finalizeScrape() {
         .from('brainrot_scrape_runs')
         .select('segments_completed')
         .eq('id', runningRun.id)
-        .single();
+        .maybeSingle();
       const completed = check?.segments_completed || 0;
       if (completed >= target) break;
       if (completed === lastCompleted && waited > 20000) {

@@ -33,21 +33,21 @@ const STRATEGIES: Record<string, {
   sort: (a: Recommendation, b: Recommendation) => number;
   diversified?: boolean;
   autoMaxPrice?: number;
-  /** Use min price instead of median for gem budget (Farmer/Budget buy cheapest listings) */
   gemPrice?: (r: Recommendation) => number;
-  /** Skip premium pinning — Budget/Farmer want ONLY cheap items */
   noPremiumPin?: boolean;
+  /** Default filter settings when switching to this strategy */
+  defaults?: { priceField?: 'min' | 'med' | 'max'; minPrice?: string; maxPrice?: string };
 }> = {
   allstar: {
     label: 'All-Star', desc: 'Best overall value — balances price, demand, flip & rarity', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
     sort: (a, b) => profitScore(b) - profitScore(a),
+    defaults: { priceField: 'med', minPrice: '2' },
   },
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand, easy resell', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
-    // Use p25 (25th percentile) — realistic cheap price, avoids outlier lowball listings
-    // Raw min is often a $0.50 scam listing for a $5 med item → breaks gem tiers
     gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
+    defaults: { priceField: 'med', minPrice: '2' },
     sort: (a, b) => {
       const aScore = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
       const bScore = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0);
@@ -56,6 +56,7 @@ const STRATEGIES: Record<string, {
   },
   flipper: {
     label: 'Flipper', desc: 'Buy low sell high — max spread & ROI', icon: '\uD83D\uDCB0', color: '#45d0ff', gradient: 'linear-gradient(135deg, #45d0ff22, #0099cc22)',
+    defaults: { priceField: 'min', minPrice: '2' },
     sort: (a, b) => {
       const aScore = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0);
       const bScore = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0);
@@ -64,6 +65,7 @@ const STRATEGIES: Record<string, {
   },
   sniper: {
     label: 'Sniper', desc: 'Scarce high-value items — underpriced gems', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
+    defaults: { priceField: 'med', minPrice: '5' },
     sort: (a, b) => {
       const aPrice = Math.min(10, Math.log10((a.med ?? 0) + 1) * 3);
       const bPrice = Math.min(10, Math.log10((b.med ?? 0) + 1) * 3);
@@ -74,6 +76,7 @@ const STRATEGIES: Record<string, {
   },
   whale: {
     label: 'Whale', desc: 'Premium high-value items only — $10+ market', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
+    defaults: { priceField: 'med', minPrice: '10' },
     sort: (a, b) => {
       const aScore = (a.med ?? 0) * 1.0 + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3;
       const bScore = (b.med ?? 0) * 1.0 + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3;
@@ -82,6 +85,7 @@ const STRATEGIES: Record<string, {
   },
   trending: {
     label: 'Trending', desc: 'Hot items trending now — ride the wave', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
+    defaults: { priceField: 'med', minPrice: '0' },
     sort: (a, b) => {
       const aScore = (a.trendingListings || 0) * 5 + (a.soldCount || 0) * 2 + (a.score ?? 0) * 0.3;
       const bScore = (b.trendingListings || 0) * 5 + (b.soldCount || 0) * 2 + (b.score ?? 0) * 0.3;
@@ -93,6 +97,7 @@ const STRATEGIES: Record<string, {
     autoMaxPrice: 5,
     gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
+    defaults: { priceField: 'med', minPrice: '1', maxPrice: '5' },
     sort: (a, b) => {
       const aPrice = Math.max(a.med ?? 0, 0.01);
       const bPrice = Math.max(b.med ?? 0, 0.01);
@@ -105,6 +110,7 @@ const STRATEGIES: Record<string, {
     label: 'Diversified', desc: 'Balanced portfolio across all rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
     sort: (a, b) => profitScore(b) - profitScore(a),
     diversified: true,
+    defaults: { priceField: 'med', minPrice: '2' },
   },
 };
 
@@ -114,7 +120,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [activeStrategy, setActiveStrategy] = useState<string>('allstar');
   const [filterMinPrice, setFilterMinPrice] = useState('2');
   const [filterMaxPrice, setFilterMaxPrice] = useState('99999');
-  const [filterPriceField, setFilterPriceField] = useState<'min' | 'med' | 'max'>('min');
+  const [filterPriceField, setFilterPriceField] = useState<'min' | 'med' | 'max'>('med');
   const [minListings, setMinListings] = useState('1');
   const [maxItems, setMaxItems] = useState('50');
   const [rarity, setRarity] = useState('all');
@@ -305,12 +311,21 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       showToast(`"${trimmed}" already blacklisted`); return;
     }
     setConfig((c: Config) => ({ ...c, blacklisted: [...c.blacklisted, trimmed] }));
+    showToast(`Blacklisted "${trimmed}"`);
   };
 
   const switchStrategy = (id: string) => {
     setActiveStrategy(id);
     setRemovedItems(new Set());
     setMinValueOverrides({});
+    // Apply strategy's default filter settings
+    const s = STRATEGIES[id];
+    if (s?.defaults) {
+      if (s.defaults.priceField) setFilterPriceField(s.defaults.priceField);
+      if (s.defaults.minPrice != null) setFilterMinPrice(s.defaults.minPrice);
+      if (s.defaults.maxPrice != null) setFilterMaxPrice(s.defaults.maxPrice);
+      else setFilterMaxPrice('99999');
+    }
   };
 
   /* ─── Data freshness ─── */
