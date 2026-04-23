@@ -316,13 +316,13 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
               <div key={id} onClick={() => switchStrategy(id)} role="button" tabIndex={0} aria-pressed={isActive}
                 onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), switchStrategy(id))}
                 className={`strategy-card ${isActive ? 'active' : ''}`}
-                style={{ background: isActive ? s.gradient : undefined, borderColor: isActive ? s.color : undefined }}>
+                style={isActive ? { borderColor: s.color, boxShadow: `0 0 20px ${s.color}22, 0 4px 20px rgba(0,0,0,0.3)` } : undefined}>
                 <div className="d-flex items-center gap-2">
                   <span className="text-2xl">{s.icon}</span>
                   <div className="flex-1 min-w-0">
                     <div className="fw-700 text-md text-display" style={{ color: isActive ? s.color : 'var(--text)' }}>{s.label}</div>
                     <div className="text-xs text-muted leading-snug">{s.desc}</div>
-                    {isActive && <div className="text-xs text-muted leading-snug mt-1" style={{ opacity: 0.7 }}>{s.detail}</div>}
+                    {isActive && <div className="text-xs leading-snug mt-1" style={{ color: s.color, opacity: 0.7 }}>{s.detail}</div>}
                   </div>
                 </div>
               </div>
@@ -337,7 +337,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setShowAdvancedFilters(!showAdvancedFilters))}>
           <div className="d-flex items-center gap-2">
             <span className="text-md fw-600 text-sub">Filters</span>
-            <span className="text-sm text-muted">{filtered.length} match</span>
+            <span className="text-sm" style={{ color: 'var(--accent2)' }}>{filtered.length} match</span>
+            <span className="text-xs text-muted">/ {data?.recommendations?.length ?? 0} total</span>
             {config.blacklisted.length > 0 && <span className="pill pill-warn">{config.blacklisted.length} BL</span>}
           </div>
           <span className={`text-md text-muted animate-chevron${showAdvancedFilters ? ' open' : ''}`}>{'\u25BC'}</span>
