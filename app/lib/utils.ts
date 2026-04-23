@@ -23,27 +23,32 @@ export function getMaxMutationPrice(rec: Recommendation | null | undefined): num
 
 /**
  * Returns a summary of mutation data for display.
- * Shows count of mutations with listings and the highest-value mutation.
+ * Aggregates properly per mutation (averages prices across combos for same mutation),
+ * consistent with how getMutationAdvisory calculates.
  */
 export function getMutationSummary(rec: Recommendation | null | undefined): { count: number; maxPrice: number; maxName: string; totalListings: number } {
   if (!rec?.bestCombos || rec.bestCombos.length === 0) return { count: 0, maxPrice: 0, maxName: '', totalListings: 0 };
+  // Group combos by mutation name, then average prices per mutation
+  const byMut: Record<string, { prices: number[]; listings: number }> = {};
+  for (const c of rec.bestCombos) {
+    const m = c.mut || c.mutation || 'None';
+    if (m === 'None') continue;
+    if (!byMut[m]) byMut[m] = { prices: [], listings: 0 };
+    const med = c.med ?? c.medianPrice ?? 0;
+    if (isFinite(med) && med > 0) byMut[m].prices.push(med);
+    byMut[m].listings += c.n ?? c.count ?? 0;
+  }
   let count = 0;
   let maxPrice = 0;
   let maxName = '';
   let totalListings = 0;
-  const seen = new Set<string>();
-  for (const c of rec.bestCombos) {
-    const m = c.mut || c.mutation || 'None';
-    if (m === 'None') continue;
-    if (seen.has(m)) continue;
-    seen.add(m);
+  for (const [mut, data] of Object.entries(byMut)) {
     count++;
-    const med = c.med ?? c.medianPrice ?? 0;
-    const n = c.n ?? c.count ?? 0;
-    totalListings += n;
-    if (isFinite(med) && med > maxPrice) {
-      maxPrice = med;
-      maxName = m;
+    totalListings += data.listings;
+    const avgPrice = data.prices.length > 0 ? data.prices.reduce((s, p) => s + p, 0) / data.prices.length : 0;
+    if (avgPrice > maxPrice) {
+      maxPrice = avgPrice;
+      maxName = mut;
     }
   }
   return { count, maxPrice, maxName, totalListings };
@@ -59,9 +64,13 @@ export function getMutationSummary(rec: Recommendation | null | undefined): { co
  *
  * Output range: 0–100 (clamped). $6000 Headless Horseman → ~0, $1 junk → ~90+.
  */
-export function computePriority(rec: { rarity?: string; score?: number; soldCount?: number; med?: number } | null | undefined): number {
+export function computePriority(rec: { rarity?: string; score?: number; soldCount?: number; med?: number; bestCombos?: any[] } | null | undefined): number {
   if (!rec) return 50;
-  const med = isFinite(rec.med ?? 0) ? (rec.med ?? 0) : 0;
+  // Use the HIGHER of base median or max mutation price for priority calc.
+  // A pet with base=$1 but Cursed=$30 should have priority ~35, not ~80.
+  const baseMed = isFinite(rec.med ?? 0) ? (rec.med ?? 0) : 0;
+  const maxMut = getMaxMutationPrice(rec as any);
+  const med = Math.max(baseMed, maxMut);
   // Price contributes 0-60 (inverted: higher price = lower number = higher priority)
   const priceComponent = med >= 500 ? 0 : med >= 200 ? 10 : med >= 100 ? 15
     : med >= 50 ? 25 : med >= 20 ? 35 : med >= 10 ? 40
@@ -272,11 +281,13 @@ export function getMutationAdvisory(rec: Recommendation, gemMode: GemMode = 'def
   if (!rec?.bestCombos || rec.bestCombos.length === 0) return [];
 
   const baseCombos = rec.bestCombos.filter(c => c.mut === 'None' || !c.mut);
-  const baseMed = baseCombos.length > 0
+  let baseMed = baseCombos.length > 0
     ? baseCombos.reduce((s, c) => s + (c.med || 0), 0) / baseCombos.length
     : rec.med || rec.min || 0;
 
-  if (baseMed <= 0) return [];
+  // If base price is 0 but mutations exist, don't bail — mutations still need gem budgets.
+  // Use 0.01 as floor to prevent division-by-zero in priceRatio.
+  if (baseMed <= 0) baseMed = 0.01;
 
   const advisories: MutationAdvisory[] = [];
   const byMut: Record<string, typeof rec.bestCombos> = {};

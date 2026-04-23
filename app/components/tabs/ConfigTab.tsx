@@ -27,23 +27,21 @@ function profitScore(r: Recommendation): number {
   return isFinite(score) ? score : 0;
 }
 
-/* ─── Strategy Presets ─── */
+/* ─── Strategy Presets (3 only — focused and perfected) ─── */
 const STRATEGIES: Record<string, {
   label: string; desc: string; icon: string; color: string; gradient: string;
   sort: (a: Recommendation, b: Recommendation) => number;
-  diversified?: boolean;
-  autoMaxPrice?: number;
   gemMode?: GemMode;
   defaults?: { priceField?: 'min' | 'med' | 'max'; minPrice?: string; maxPrice?: string };
 }> = {
   allstar: {
-    label: 'All-Star', desc: 'Best overall value', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
+    label: 'All-Star', desc: 'Best overall value — full competitive gems', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
     gemMode: 'default',
     sort: (a, b) => profitScore(b) - profitScore(a),
     defaults: { priceField: 'med', minPrice: '2' },
   },
   farmer: {
-    label: 'Farmer', desc: 'High volume, proven demand', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
+    label: 'Farmer', desc: 'High volume, proven demand — tight gem budgets', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
     gemMode: 'farmer',
     defaults: { priceField: 'med', minPrice: '2' },
     sort: (a, b) => {
@@ -52,69 +50,25 @@ const STRATEGIES: Record<string, {
       return bS - aS;
     },
   },
-  flipper: {
-    label: 'Flipper', desc: 'Buy low, sell high', icon: '\uD83D\uDCB0', color: '#45d0ff', gradient: 'linear-gradient(135deg, #45d0ff22, #0099cc22)',
-    gemMode: 'flipper',
-    defaults: { priceField: 'min', minPrice: '2' },
-    sort: (a, b) => {
-      const aS = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0);
-      const bS = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0);
-      return bS - aS;
-    },
-  },
-  sniper: {
-    label: 'Sniper', desc: 'Scarce high-value finds', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
-    gemMode: 'default',
-    defaults: { priceField: 'med', minPrice: '5' },
-    sort: (a, b) => {
-      const aP = Math.min(10, Math.log10((a.med ?? 0) + 1) * 3);
-      const bP = Math.min(10, Math.log10((b.med ?? 0) + 1) * 3);
-      return (bP * 4 + (b.scarcityScore ?? 0) * 3 + (b.valueScore ?? 0) * 2 + ((b.soldCount ?? 0) > 0 ? 3 : 0))
-           - (aP * 4 + (a.scarcityScore ?? 0) * 3 + (a.valueScore ?? 0) * 2 + ((a.soldCount ?? 0) > 0 ? 3 : 0));
-    },
-  },
-  whale: {
-    label: 'Whale', desc: 'Premium $10+ items', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
-    gemMode: 'default',
-    defaults: { priceField: 'med', minPrice: '10' },
-    sort: (a, b) => ((b.med ?? 0) + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3)
-                   - ((a.med ?? 0) + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3),
-  },
   trending: {
-    label: 'Trending', desc: 'Hot items right now', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
+    label: 'Trending', desc: 'Hot items right now — momentum-based', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
     gemMode: 'default',
     defaults: { priceField: 'med', minPrice: '0' },
     sort: (a, b) => ((b.trendingListings || 0) * 5 + (b.soldCount || 0) * 2 + (b.score ?? 0) * 0.3)
                    - ((a.trendingListings || 0) * 5 + (a.soldCount || 0) * 2 + (a.score ?? 0) * 0.3),
   },
-  budget: {
-    label: 'Budget', desc: 'Under $5, high ROI', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
-    autoMaxPrice: 5,
-    gemMode: 'budget',
-    defaults: { priceField: 'med', minPrice: '1', maxPrice: '5' },
-    sort: (a, b) => {
-      const aV = ((a.score ?? 0) / Math.max(a.med ?? 0, 0.01)) * ((a.soldCount ?? 0) > 0 ? 2 : 1);
-      const bV = ((b.score ?? 0) / Math.max(b.med ?? 0, 0.01)) * ((b.soldCount ?? 0) > 0 ? 2 : 1);
-      return bV - aV;
-    },
-  },
-  diversified: {
-    label: 'Diversified', desc: 'Balanced across rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
-    gemMode: 'default',
-    sort: (a, b) => profitScore(b) - profitScore(a),
-    diversified: true,
-    defaults: { priceField: 'med', minPrice: '2' },
-  },
 };
 
-const PREMIUM_THRESHOLD = 50;
+// $20+ items = 1M gems = ALWAYS worth grabbing = pinned at top of every strategy.
+// Matches the smartMinValue $20+ → 1M tier. If it's worth 1M gems, it's first in line.
+const PREMIUM_THRESHOLD = 20;
 const GEM_LABELS: Record<number, string> = {
   1000000: '1M', 10000000: '10M', 50000000: '50M', 100000000: '100M',
   150000000: '150M', 200000000: '200M', 300000000: '300M', 400000000: '400M',
   500000000: '500M', 600000000: '600M', 700000000: '700M', 800000000: '800M',
   1000000000: '1B', 1500000000: '1.5B', 2000000000: '2B',
 };
-const GEM_OPTIONS = Object.entries(GEM_LABELS).map(([v, l]) => ({ value: Number(v), label: l }));
+const GEM_OPTIONS = Object.entries(GEM_LABELS).map(([v, l]) => ({ value: Number(v), label: l })).sort((a, b) => a.value - b.value);
 
 function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [activeStrategy, setActiveStrategy] = useState<string>('allstar');
@@ -148,7 +102,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     if (!data?.recommendations) return [];
     const lo = parseFloat(filterMinPrice) || 0;
     const userHi = parseFloat(filterMaxPrice) || 999999;
-    const hi = strat?.autoMaxPrice ? Math.min(userHi, strat.autoMaxPrice) : userHi;
+    const hi = userHi;
     const ml = parseInt(minListings) || 1;
     const bl = new Set(config.blacklisted.map((n: string) => n.toLowerCase()));
     const pf = filterPriceField;
@@ -157,52 +111,36 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       if (rarity !== 'all' && r.rarity !== rarity) return false;
       if (excludedRarities.has(r.rarity)) return false;
       const price = pf === 'min' ? (r.min ?? 0) : pf === 'max' ? (r.max ?? 0) : (r.med ?? 0);
-      // Premium items ($50+) ALWAYS pass — never miss a Dragon or Meowl
-      if ((r.med ?? 0) >= PREMIUM_THRESHOLD) return (r.listings ?? 0) >= ml;
-      // Check if ANY mutation of this pet is valuable enough to include.
-      // This catches "Money Money Puggy Cursed = $30" even when base = $1.
       const maxMutPrice = getMaxMutationPrice(r);
-      if (maxMutPrice >= PREMIUM_THRESHOLD) return (r.listings ?? 0) >= ml;
-      if (maxMutPrice >= lo && maxMutPrice <= hi) return (r.listings ?? 0) >= ml;
+      const effectivePrice = Math.max(r.med ?? 0, maxMutPrice);
+      // Premium items ($50+ base or mutation) ALWAYS pass — never miss a Dragon, Meowl,
+      // or a pet with a $60 Cursed mutation
+      if (effectivePrice >= PREMIUM_THRESHOLD) return (r.listings ?? 0) >= ml;
+      // Include pet if any mutation price falls within the filter range
+      if (maxMutPrice > 0 && maxMutPrice >= lo && maxMutPrice <= hi) return (r.listings ?? 0) >= ml;
+      // Standard base price check
       return price >= lo && price <= hi && (r.listings ?? 0) >= ml;
     });
   }, [data, filterMinPrice, filterMaxPrice, filterPriceField, minListings, rarity, excludedRarities, config.blacklisted, strat]);
 
   /* ─── Sort ─── */
-  // UNIVERSAL RULE: Premium items ($50+) ALWAYS float to top regardless of strategy.
-  // A Dragon, Meowl, Skibidi Toilet — these are ALWAYS first priority.
-  // Strategy only changes the sort ORDER within non-premium items and gem budgets.
+  // UNIVERSAL RULE: Expensive items ALWAYS float to top regardless of strategy.
+  // A Dragon ($440), Meowl ($60), Skibidi Toilet — priority 0, 1M gems, top of list.
+  // Strategy only changes sort ORDER within non-premium items and gem budgets.
+  // Also considers mutation value: pet with base=$1 but Cursed=$30 sorts like a $30 item.
   const results = useMemo(() => {
     const sortFn = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
     const maxN = parseInt(maxItems) || 50;
 
-    if (strat?.diversified) {
-      const byRarity: Record<string, Recommendation[]> = {};
-      for (const r of filtered) { if (!byRarity[r.rarity]) byRarity[r.rarity] = []; byRarity[r.rarity].push(r); }
-      const result: Recommendation[] = [];
-      const rarities = Object.keys(byRarity).sort((a, b) => getRarityWeight(a) - getRarityWeight(b));
-      const totalWeight = rarities.reduce((sum, r) => sum + (11 - getRarityWeight(r)), 0);
-      for (const rar of rarities) {
-        const weight = 11 - getRarityWeight(rar);
-        const slots = Math.max(2, Math.round((weight / Math.max(totalWeight, 1)) * maxN));
-        byRarity[rar].sort(sortFn);
-        result.push(...byRarity[rar].slice(0, slots));
-      }
-      const seen = new Set<string>();
-      const deduped = result.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; });
-      // Still pin premium items at top even in diversified
-      const premium = deduped.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
-      const rest = deduped.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
-      premium.sort((a, b) => (b.med ?? 0) - (a.med ?? 0));
-      rest.sort(sortFn);
-      return [...premium, ...rest].slice(0, maxN);
-    }
+    // Effective price = max(base median, highest mutation price)
+    // This ensures pets included for their mutations sort correctly
+    const effectivePrice = (r: Recommendation) => Math.max(r.med ?? 0, getMaxMutationPrice(r));
 
-    // ALL strategies: premium items pinned at top, then strategy sort for the rest.
-    // This ensures a Farmer NEVER misses a Dragon or Meowl at the top of their list.
-    const premium = filtered.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
-    const pool = filtered.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
-    premium.sort((a, b) => (b.med ?? 0) - (a.med ?? 0));
+    const premium = filtered.filter(r => effectivePrice(r) >= PREMIUM_THRESHOLD);
+    const pool = filtered.filter(r => effectivePrice(r) < PREMIUM_THRESHOLD);
+    // Premium: sorted by effective price descending (most expensive first)
+    premium.sort((a, b) => effectivePrice(b) - effectivePrice(a));
+    // Pool: sorted by strategy
     pool.sort(sortFn);
     const seen = new Set<string>();
     const combined: Recommendation[] = [];
@@ -231,7 +169,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       return s + adv.filter(a => a.needsOverride).length;
     }, 0);
     return { premium, mid, cheap, totalSold, mutOverrides, total: displayResults.length };
-  }, [displayResults]);
+  }, [displayResults, gemMode]);
 
   /* ─── Generate + download ─── */
   const generateAndDownload = () => {
