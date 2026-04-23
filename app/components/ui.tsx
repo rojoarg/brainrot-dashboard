@@ -47,8 +47,9 @@ export const ImageThumb = React.memo(function ImageThumb({ src, size = 28, alt =
 
 /* ─── Trust Badge ─── */
 export const TrustBadge = React.memo(function TrustBadge({ score }: { score: number }) {
-  const c = score >= 85 ? 'var(--green)' : score >= 60 ? 'var(--gold)' : 'var(--red)';
-  return <span className="trust-score" style={{ color: c }}>{score}%</span>;
+  const s = isFinite(score) ? score : 0;
+  const c = s >= 85 ? 'var(--green)' : s >= 60 ? 'var(--gold)' : 'var(--red)';
+  return <span className="trust-score" style={{ color: c }}>{s}%</span>;
 });
 
 /* ─── Search Input ─── */

@@ -56,7 +56,7 @@ export default React.memo(function WatchlistTab({ data, config, openDetail, remo
             </span>
           )}
         </div>
-        <button type="button" className="btn btn-primary fw-700 text-md" onClick={() => downloadConfigJSON(config, undefined, data.recommendations)}>Export Config JSON</button>
+        <button type="button" className="btn btn-primary fw-700 text-md" onClick={() => downloadConfigJSON(config, () => {}, data.recommendations)}>Export Config JSON</button>
       </div>
       <div className="glass-card table-wrap max-h-75">
 

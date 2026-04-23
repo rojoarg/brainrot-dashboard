@@ -48,14 +48,21 @@ function OverviewTab({ data, openDetail }: OverviewTabProps) {
     })).sort((a, b) => a.date.localeCompare(b.date));
   }, [priceHistory]);
 
-  // Market value by rarity
+  // Market value by rarity — compute actual avg prices from brainrots data
   const rarityValue = useMemo(() => {
-    return rarityDist.map((r: { name: string; count: number; color: string }) => ({
-      name: r.name,
-      avgPrice: 0,
-      totalValue: 0,
-    })).filter((r: { name: string; avgPrice: number; totalValue: number }) => r.totalValue > 0).sort((a: { name: string; avgPrice: number; totalValue: number }, b: { name: string; avgPrice: number; totalValue: number }) => b.totalValue - a.totalValue);
-  }, [rarityDist]);
+    const byRarity: Record<string, { name: string; totalPrice: number; count: number }> = {};
+    for (const [, b] of Object.entries(data.brainrots || {})) {
+      const r = (b as any).rarity as string;
+      if (!r) continue;
+      if (!byRarity[r]) byRarity[r] = { name: r, totalPrice: 0, count: 0 };
+      byRarity[r].totalPrice += (b as any).medianPrice || 0;
+      byRarity[r].count++;
+    }
+    return Object.values(byRarity)
+      .map(r => ({ name: r.name, avgPrice: r.count > 0 ? Math.round(r.totalPrice / r.count * 100) / 100 : 0, totalValue: Math.round(r.totalPrice * 100) / 100 }))
+      .filter(r => r.totalValue > 0)
+      .sort((a, b) => b.avgPrice - a.avgPrice);
+  }, [data]);
 
   // Score vs Price scatter data
   const scatterData = useMemo(() => {

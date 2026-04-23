@@ -2,12 +2,8 @@
 
 import React, { useState, useMemo } from 'react';
 import type { DashData, Brainrot } from '../../lib/types';
-import { raritySort } from '../../lib/utils';
-import { fmt, fmtPrice } from '../../lib/utils';
-import { RARITY_WEIGHT } from '../../lib/constants';
+import { raritySort, fmt, fmtPrice, getRarityWeight } from '../../lib/utils';
 import { SearchInput, FilterBar, RarityBadge, ImageThumb, WLButton } from '../ui';
-
-const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
 
 interface BrainrotsTabProps {
   data: DashData;
