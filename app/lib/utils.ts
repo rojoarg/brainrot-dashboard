@@ -98,7 +98,7 @@ export const raritySort = (a: string, b: string) =>
  * @param rec Recommendation or Brainrot with price data
  * @returns min_value in gems (always ≥ 1,000,000)
  */
-export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; p25?: number; rarity?: string; flipScore?: number; listings?: number; medianPrice?: number; minPrice?: number } | null): number {
+export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; p25?: number; rarity?: string; flipScore?: number; listings?: number; medianPrice?: number; minPrice?: number } | null, priceOverride?: number): number {
   if (!rec) return 1000000;
 
   // Use medianPrice (from Brainrot) or med (from Recommendation)
@@ -108,7 +108,9 @@ export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; 
   // If no price data, default to 1M (floor)
   if (med <= 0 && min <= 0) return 1000000;
 
-  const price = med > 0 ? med : min;
+  // Allow strategy to override which price drives the gem budget
+  // e.g. Farmer uses min price (buys cheapest listings)
+  const price = priceOverride ?? (med > 0 ? med : min);
 
   // Simple human logic:
   // Worth real money ($20+)? ALWAYS grab it. 1M gems = lowest possible.

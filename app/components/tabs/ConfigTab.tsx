@@ -58,6 +58,8 @@ const STRATEGIES: Record<string, {
   /** When set, auto-filters items to this max median price */
   autoMaxPrice?: number;
   filterHint?: string;
+  /** Override which price drives the gem budget. Default = median. Farmer = min (cheapest listing). */
+  gemPrice?: (r: Recommendation) => number;
 }> = {
   allstar: {
     label: 'All-Star', desc: 'Best overall value — balances price, demand, flip & rarity', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
@@ -68,6 +70,8 @@ const STRATEGIES: Record<string, {
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand, easy resell', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
     bypassMasterSort: true,
+    // Farmer buys the CHEAPEST listing, so gem budget uses min price not median
+    gemPrice: (r) => r.min ?? r.med ?? 0,
     sort: (a: Recommendation, b: Recommendation) => {
       // Farmers want: proven sold history + enough supply + not too expensive
       // farmScore heavily weighted, price tier bonus, rarity as minor tiebreaker only
@@ -138,6 +142,8 @@ const STRATEGIES: Record<string, {
     label: 'Budget', desc: 'Max value under $5 — high ROI for small capital', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
     bypassMasterSort: true,
     autoMaxPrice: 5,
+    // Budget buys cheap items — use min price for gem budget
+    gemPrice: (r) => r.min ?? r.med ?? 0,
     sort: (a: Recommendation, b: Recommendation) => {
       // Budget: value efficiency (score/price) is primary, rarity irrelevant
       // Guard against zero/negative prices
@@ -267,6 +273,14 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   // Filter out removed items from display
   const displayResults = useMemo(() => results.filter(r => !removedItems.has(r.name)), [results, removedItems]);
 
+  // Strategy-aware min_value: uses strategy's gemPrice override if defined
+  const getMinValue = (r: Recommendation) => {
+    if (minValueOverrides[r.name] != null) return minValueOverrides[r.name];
+    const strat = STRATEGIES[activeStrategy];
+    if (strat?.gemPrice) return smartMinValue(r, strat.gemPrice(r));
+    return smartMinValue(r);
+  };
+
   /* Build config from results and immediately download */
   const generateAndDownload = () => {
     const wl: WLItem[] = displayResults.map((r: Recommendation) => {
@@ -274,7 +288,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       const item: WLItem = {
         pet_name: r.name,
         priority: computePriority(r),
-        min_value: minValueOverrides[r.name] ?? smartMinValue(r),
+        min_value: getMinValue(r),
       };
       // Compute mutation overrides for this pet
       const advisory = getMutationAdvisory(r);
@@ -634,7 +648,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                 <tbody role="rowgroup">
                   {displayResults.map((r: Recommendation, i: number) => {
                     if (!r?.name) return null;
-                    const currentMinVal = minValueOverrides[r.name] ?? smartMinValue(r);
+                    const currentMinVal = getMinValue(r);
                     return (
                       <tr key={`config-${r.name}`} role="row">
                         <td className="text-muted text-mono">{i + 1}</td>
