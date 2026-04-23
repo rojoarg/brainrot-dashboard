@@ -312,7 +312,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const priceFieldLabel = filterPriceField === 'min' ? 'min price' : filterPriceField === 'max' ? 'max price' : 'median';
 
   return (
-    <div className="d-flex flex-col gap-4">
+    <div className="d-flex flex-col gap-4 animate-fade-in">
 
       {/* ─── Data freshness ─── */}
       {dataFreshness && (

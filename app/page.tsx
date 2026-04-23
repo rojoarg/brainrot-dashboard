@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { TabErrorBoundary } from './components/ErrorBoundary';
+import { DashboardSkeleton } from './components/ui';
 import type { DashData, Config, TabId } from './lib/types';
 import { TABS } from './lib/constants';
 import { timeAgo, downloadConfigJSON, exportData, smartMinValue, getMutationAdvisory, computePriority } from './lib/utils';
@@ -200,12 +201,15 @@ export default function Dashboard() {
     return items.sort((a, b) => Math.abs(parseFloat(b.detail)) - Math.abs(parseFloat(a.detail))).slice(0, 20);
   }, [data]);
 
-  /* ─── Loading state ─── */
+  /* ─── Loading state — premium skeleton ─── */
   if (isLoading) return (
-    <div className="loading-screen" role="status" aria-live="polite">
-      <div className="loading-brand">Brainrot Intel</div>
-      <div className="spinner" aria-hidden="true" />
-      <div className="loading-hint">Loading market intelligence...</div>
+    <div role="status" aria-live="polite">
+      <div className="loading-screen" style={{ minHeight: 'auto', padding: 'var(--sp-8) 0 var(--sp-4)' }}>
+        <div className="loading-brand">Brainrot Intel</div>
+        <div className="spinner" aria-hidden="true" />
+        <div className="loading-hint">Connecting to market feed...</div>
+      </div>
+      <DashboardSkeleton />
     </div>
   );
 

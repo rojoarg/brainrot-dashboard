@@ -72,7 +72,7 @@ function OverviewTab({ data, openDetail }: OverviewTabProps) {
   }, [recommendations]);
 
   return (
-    <div className="d-flex flex-col gap-6">
+    <div className="d-flex flex-col gap-6 animate-fade-in">
       {/* Hero stats */}
       <div className="grid-stats stagger-in">
         <StatCard label="Total Listings" value={meta.totalListings.toLocaleString()} sub={(meta.recordCount ?? 0) > meta.totalListings ? `${meta.recordCount!.toLocaleString()} in API` : ''} />
