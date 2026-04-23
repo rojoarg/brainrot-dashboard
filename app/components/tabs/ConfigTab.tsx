@@ -44,7 +44,9 @@ const STRATEGIES: Record<string, {
   },
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand, easy resell', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
-    gemPrice: (r) => r.min ?? r.med ?? 0,
+    // Use p25 (25th percentile) — realistic cheap price, avoids outlier lowball listings
+    // Raw min is often a $0.50 scam listing for a $5 med item → breaks gem tiers
+    gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
     sort: (a, b) => {
       const aScore = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
@@ -89,7 +91,7 @@ const STRATEGIES: Record<string, {
   budget: {
     label: 'Budget', desc: 'Max value under $5 — high ROI for small capital', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
     autoMaxPrice: 5,
-    gemPrice: (r) => r.min ?? r.med ?? 0,
+    gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
     sort: (a, b) => {
       const aPrice = Math.max(a.med ?? 0, 0.01);
@@ -140,7 +142,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     const ml = parseInt(minListings) || 1;
     const bl = new Set(config.blacklisted.map((n: string) => n.toLowerCase()));
     return data.recommendations.filter((r: Recommendation) => {
-      if (!r || !r.name || bl.has(r.name.toLowerCase())) return false;
+      if (!r || !r.name || bl.has(r.name.toLowerCase()) || r.name === 'Other') return false;
       if (rarity !== 'all' && r.rarity !== rarity) return false;
       if (excludedRarities.has(r.rarity)) return false;
       // Premium items ($50+) always pass price filters UNLESS strategy disables premium pinning
@@ -367,7 +369,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
 
       {/* ─── Filters (collapsed) ─── */}
       <div className="filter-panel">
-        <div className="filter-panel-header" onClick={() => setShowFilters(!showFilters)}>
+        <div className="filter-panel-header" onClick={() => setShowFilters(!showFilters)} role="button" tabIndex={0} aria-expanded={showFilters}
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setShowFilters(!showFilters))}>
           <div className="d-flex items-center gap-2">
             <span className="text-md fw-600 text-sub">Filters</span>
             <span className="text-sm text-muted">{filtered.length} pets match</span>
@@ -500,7 +503,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                         <td className="text-muted">{r.soldCount ?? 0}</td>
                         <td>
                           <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.75rem', padding: '2px 4px', minWidth: 80 }}
-                            value={getMinValue(r)}
+                            value={getMinValue(r)} aria-label={`Gem budget for ${r.name}`}
                             onChange={e => setMinValueOverrides(prev => ({ ...prev, [r.name]: parseInt(e.target.value) }))}>
                             <option value={1000000}>1M</option>
                             <option value={50000000}>50M</option>
@@ -514,7 +517,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                         </td>
                         <td>
                           <button type="button" className="btn btn-sm" onClick={() => setRemovedItems(prev => new Set([...prev, r.name]))}
-                            style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#ff4757' }} title="Remove">{'\u2715'}</button>
+                            style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#ff4757' }} title={`Remove ${r.name}`} aria-label={`Remove ${r.name} from config`}>{'\u2715'}</button>
                         </td>
                       </tr>
                     );
