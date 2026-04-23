@@ -6,7 +6,7 @@ export const maxDuration = 60;
 const ELDORADO_API = 'https://www.eldorado.gg/api/v1/item-management/offers?gameId=259&category=CustomItem&pageSize=50&useMinPurchasePrice=false&pageIndex=';
 const IMAGE_BASE = 'https://images.eldorado.gg/';
 const CONCURRENT = 5;              // 5 concurrent fetches to avoid rate-limiting
-const PAGES_PER_CHUNK = 20;        // 20 pages per chunk â 10s â safe even when Eldorado API is slow
+const PAGES_PER_CHUNK = 20;        // 20 pages per chunk â 10s -- safe even when Eldorado API is slow
 const CHUNKS_PER_CALL = 1;         // 1 chunk per call
 const MAX_PAGES = 1400;            // Eldorado has ~65k listings (1310+ pages x 50/page). 1400 = headroom.
 const TOTAL_CHUNKS = Math.ceil(MAX_PAGES / PAGES_PER_CHUNK); // 70 chunks
@@ -72,7 +72,7 @@ async function fetchPage(page: number, retries = 2): Promise<Listing[] | null> {
         signal: AbortSignal.timeout(15000),
       });
       if (res.status === 429) {
-        // Rate limited â wait and retry
+        // Rate limited -- wait and retry
         await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
         continue;
       }
@@ -93,7 +93,7 @@ async function fetchPage(page: number, retries = 2): Promise<Listing[] | null> {
   return null;
 }
 
-// Sanitize text for safe PostgreSQL insertion â strips null bytes and control chars
+// Sanitize text for safe PostgreSQL insertion -- strips null bytes and control chars
 function sanitizeText(val: string | null, maxLen: number = 500): string {
   if (!val) return '';
   const cleaned = val.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
@@ -126,29 +126,35 @@ function toDbRow(l: Listing) {
 }
 
 // Chain: trigger the next batch via Supabase pg_net (external HTTP).
-// This avoids Vercel's 508 Loop Detected error â the HTTP call originates from
+// This avoids Vercel's 508 Loop Detected error -- the HTTP call originates from
 // Supabase's infrastructure, not from within the Vercel function chain.
+// pg_net timeout is 55s (set in trigger_scrape_batch SQL function).
 async function triggerNext(baseUrl: string, secret: string, nextSegment: string) {
-  try {
-    const { data, error } = await supabase.rpc('trigger_scrape_batch', {
-      base_url: baseUrl,
-      secret: secret,
-      segment: nextSegment,
-    });
-    if (error) {
-      console.error(`triggerNext ${nextSegment} RPC error:`, error.message);
-      // Fallback: try direct fetch (may 508 but better than nothing)
-      try {
-        await fetch(`${baseUrl}/api/scrape?segment=${nextSegment}`, {
-          headers: { 'Authorization': `Bearer ${secret}` },
-          signal: AbortSignal.timeout(3000),
-        });
-      } catch (err) { console.warn('triggerNext fallback fetch failed:', err instanceof Error ? err.message : err); }
-    } else {
-      console.log(`triggerNext ${nextSegment}: pg_net dispatched`, JSON.stringify(data));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { data, error } = await supabase.rpc('trigger_scrape_batch', {
+        base_url: baseUrl,
+        secret: secret,
+        segment: nextSegment,
+      });
+      if (error) {
+        console.error(`triggerNext ${nextSegment} RPC error (attempt ${attempt}):`, error.message);
+        if (attempt === 0) { await new Promise(r => setTimeout(r, 1000)); continue; }
+        // Final fallback: direct fetch (may 508 but better than dropping chain)
+        try {
+          await fetch(`${baseUrl}/api/scrape?segment=${nextSegment}&secret=${secret}`, {
+            headers: { 'Authorization': `Bearer ${secret}` },
+            signal: AbortSignal.timeout(5000),
+          });
+        } catch (err) { console.warn('triggerNext fallback fetch failed:', err instanceof Error ? err.message : err); }
+      } else {
+        console.log(`triggerNext ${nextSegment}: pg_net dispatched`, JSON.stringify(data));
+        return; // Success
+      }
+    } catch (err) {
+      console.error(`triggerNext ${nextSegment} exception (attempt ${attempt}):`, err);
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 1000)); continue; }
     }
-  } catch (err) {
-    console.error(`triggerNext ${nextSegment} exception:`, err);
   }
 }
 
@@ -211,7 +217,7 @@ export async function GET(request: Request) {
 
   if (segment === 'finalize') return finalizeScrape();
 
-  // Batch processing: each call processes 1 chunk (20 pages, ~10-15s â safe under 60s)
+  // Batch processing: each call processes 1 chunk (20 pages, ~10-15s -- safe under 60s)
   if (segment.startsWith('batch-')) {
     const batchParts = segment.split('-');
     const batchNum = batchParts.length > 1 ? parseInt(batchParts[1], 10) : NaN;
@@ -229,15 +235,15 @@ export async function GET(request: Request) {
       .single();
 
     if (!activeRun) {
-      return NextResponse.json({ error: 'No active scrape run â chain broken', step: `batch-${batchNum}` }, { status: 409 });
+      return NextResponse.json({ error: 'No active scrape run -- chain broken', step: `batch-${batchNum}` }, { status: 409 });
     }
 
     const chunkNum = batchNum; // 1:1 mapping now (CHUNKS_PER_CALL=1)
     // Chain: trigger next batch BEFORE scraping (fire-before-scrape pattern).
     // This ensures the trigger doesn't push us past Vercel's 60s limit.
-    // Small stagger (2s) prevents too many concurrent Eldorado requests.
+    // 5s stagger limits peak concurrency to ~3 batches (each takes ~15s).
     if (batchNum < TOTAL_CALLS - 1) {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 5000));
       await triggerNext(baseUrl, cronSecret, `batch-${batchNum + 1}`);
     }
 
@@ -252,7 +258,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Segment failed', step: `batch-${batchNum}` }, { status: 500 });
     }
 
-    // Last batch â trigger finalize as a separate hop (it needs its own 60s budget
+    // Last batch -- trigger finalize as a separate hop (it needs its own 60s budget
     // for waiting on parallel batches + swap RPC + snapshot generation)
     if (batchNum === TOTAL_CALLS - 1) {
       await triggerNext(baseUrl, cronSecret, 'finalize');
@@ -288,7 +294,7 @@ async function initScrape() {
     completed_at: new Date().toISOString(),
   }).eq('status', 'running');
 
-  // Create new scrape run BEFORE clearing staging â ensures run exists before chain starts
+  // Create new scrape run BEFORE clearing staging -- ensures run exists before chain starts
   const { data: run, error: runErr } = await supabase
     .from('brainrot_scrape_runs')
     .insert({ status: 'running', total_segments: TOTAL_CHUNKS, segments_completed: 0, staging_count: 0 })
@@ -300,7 +306,7 @@ async function initScrape() {
     return NextResponse.json({ success: false, error: 'Failed to create scrape run' }, { status: 500 });
   }
 
-  // Clear STAGING table only â live data stays intact
+  // Clear STAGING table only -- live data stays intact
   const { error: clearErr } = await supabase.from('brainrot_listings_staging').delete().neq('id', 0);
   if (clearErr) {
     // Roll back the run if staging clear fails
@@ -355,7 +361,7 @@ async function scrapeSegment(chunkNum: number) {
   }
   seenIds.clear(); // Explicit GC cleanup
 
-  // Upsert into STAGING table (not live) â dedup by offer_id
+  // Upsert into STAGING table (not live) -- dedup by offer_id
   let upsertErrors = 0;
   for (let i = 0; i < deduped.length; i += 500) {
     const { error: upsertErr } = await supabase.from('brainrot_listings_staging').upsert(
@@ -372,7 +378,7 @@ async function scrapeSegment(chunkNum: number) {
     }
   }
 
-  // Update run progress â use actual DB count to avoid inflated cross-segment duplicates
+  // Update run progress -- use actual DB count to avoid inflated cross-segment duplicates
   const { data: runningRun } = await supabase
     .from('brainrot_scrape_runs')
     .select('id, segments_completed')
@@ -516,7 +522,7 @@ async function finalizeScrape() {
     }
     snapshotCount = snapshots.length;
   } catch (snapErr: any) {
-    // Price snapshots are non-critical â log but don't fail the scrape
+    // Price snapshots are non-critical -- log but don't fail the scrape
     console.error('Price snapshot generation failed:', snapErr.message);
   }
 
@@ -547,7 +553,7 @@ async function finalizeScrape() {
     }).eq('id', runningRun.id);
   }
 
-  // Clean old market changes (14 days) â non-critical
+  // Clean old market changes (14 days) -- non-critical
   try {
     const twoWeeksAgo = new Date();
     twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
