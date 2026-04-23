@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { Config, DashData, Recommendation, WLItem } from '../../lib/types';
-import { fmtPrice, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority } from '../../lib/utils';
+import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority } from '../../lib/utils';
 import { RarityBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -12,7 +12,7 @@ interface ConfigTabProps {
   showToast: (msg: string) => void;
 }
 
-/* ─── Profit Score — unified value ranking ─── */
+/* ─── Profit Score ─── */
 function profitScore(r: Recommendation): number {
   if (!r) return 0;
   const med = r.med ?? 0;
@@ -35,79 +35,69 @@ const STRATEGIES: Record<string, {
   autoMaxPrice?: number;
   gemPrice?: (r: Recommendation) => number;
   noPremiumPin?: boolean;
-  /** Default filter settings when switching to this strategy */
   defaults?: { priceField?: 'min' | 'med' | 'max'; minPrice?: string; maxPrice?: string };
 }> = {
   allstar: {
-    label: 'All-Star', desc: 'Best overall value — balances price, demand, flip & rarity', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
+    label: 'All-Star', desc: 'Best overall value', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
     sort: (a, b) => profitScore(b) - profitScore(a),
     defaults: { priceField: 'med', minPrice: '2' },
   },
   farmer: {
-    label: 'Farmer', desc: 'High volume, proven demand, easy resell', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
+    label: 'Farmer', desc: 'High volume, proven demand', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
     gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
     defaults: { priceField: 'med', minPrice: '2' },
     sort: (a, b) => {
-      const aScore = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
-      const bScore = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0);
-      return bScore - aScore;
+      const aS = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
+      const bS = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0);
+      return bS - aS;
     },
   },
   flipper: {
-    label: 'Flipper', desc: 'Buy low sell high — max spread & ROI', icon: '\uD83D\uDCB0', color: '#45d0ff', gradient: 'linear-gradient(135deg, #45d0ff22, #0099cc22)',
+    label: 'Flipper', desc: 'Buy low, sell high', icon: '\uD83D\uDCB0', color: '#45d0ff', gradient: 'linear-gradient(135deg, #45d0ff22, #0099cc22)',
     defaults: { priceField: 'min', minPrice: '2' },
     sort: (a, b) => {
-      const aScore = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0);
-      const bScore = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0);
-      return bScore - aScore;
+      const aS = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0);
+      const bS = (b.flipScore || 0) * 3 + (b.roiPct ?? 0) * 0.15 + (b.spreadScore || 0) * 2 + ((b.soldCount ?? 0) > 0 ? 5 : 0) + ((b.listings ?? 0) >= 3 ? 3 : 0);
+      return bS - aS;
     },
   },
   sniper: {
-    label: 'Sniper', desc: 'Scarce high-value items — underpriced gems', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
+    label: 'Sniper', desc: 'Scarce high-value finds', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
     defaults: { priceField: 'med', minPrice: '5' },
     sort: (a, b) => {
-      const aPrice = Math.min(10, Math.log10((a.med ?? 0) + 1) * 3);
-      const bPrice = Math.min(10, Math.log10((b.med ?? 0) + 1) * 3);
-      const aScore = aPrice * 4 + (a.scarcityScore ?? 0) * 3 + (a.valueScore ?? 0) * 2 + ((a.soldCount ?? 0) > 0 ? 3 : 0);
-      const bScore = bPrice * 4 + (b.scarcityScore ?? 0) * 3 + (b.valueScore ?? 0) * 2 + ((b.soldCount ?? 0) > 0 ? 3 : 0);
-      return bScore - aScore;
+      const aP = Math.min(10, Math.log10((a.med ?? 0) + 1) * 3);
+      const bP = Math.min(10, Math.log10((b.med ?? 0) + 1) * 3);
+      return (bP * 4 + (b.scarcityScore ?? 0) * 3 + (b.valueScore ?? 0) * 2 + ((b.soldCount ?? 0) > 0 ? 3 : 0))
+           - (aP * 4 + (a.scarcityScore ?? 0) * 3 + (a.valueScore ?? 0) * 2 + ((a.soldCount ?? 0) > 0 ? 3 : 0));
     },
   },
   whale: {
-    label: 'Whale', desc: 'Premium high-value items only — $10+ market', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
+    label: 'Whale', desc: 'Premium $10+ items', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
     defaults: { priceField: 'med', minPrice: '10' },
-    sort: (a, b) => {
-      const aScore = (a.med ?? 0) * 1.0 + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3;
-      const bScore = (b.med ?? 0) * 1.0 + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3;
-      return bScore - aScore;
-    },
+    sort: (a, b) => ((b.med ?? 0) + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3)
+                   - ((a.med ?? 0) + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3),
   },
   trending: {
-    label: 'Trending', desc: 'Hot items trending now — ride the wave', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
+    label: 'Trending', desc: 'Hot items right now', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
     defaults: { priceField: 'med', minPrice: '0' },
-    sort: (a, b) => {
-      const aScore = (a.trendingListings || 0) * 5 + (a.soldCount || 0) * 2 + (a.score ?? 0) * 0.3;
-      const bScore = (b.trendingListings || 0) * 5 + (b.soldCount || 0) * 2 + (b.score ?? 0) * 0.3;
-      return bScore - aScore;
-    },
+    sort: (a, b) => ((b.trendingListings || 0) * 5 + (b.soldCount || 0) * 2 + (b.score ?? 0) * 0.3)
+                   - ((a.trendingListings || 0) * 5 + (a.soldCount || 0) * 2 + (a.score ?? 0) * 0.3),
   },
   budget: {
-    label: 'Budget', desc: 'Max value under $5 — high ROI for small capital', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
+    label: 'Budget', desc: 'Under $5, high ROI', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
     autoMaxPrice: 5,
     gemPrice: (r) => r.p25 ?? r.min ?? r.med ?? 0,
     noPremiumPin: true,
     defaults: { priceField: 'med', minPrice: '1', maxPrice: '5' },
     sort: (a, b) => {
-      const aPrice = Math.max(a.med ?? 0, 0.01);
-      const bPrice = Math.max(b.med ?? 0, 0.01);
-      const aVal = ((a.score ?? 0) / aPrice) * ((a.soldCount ?? 0) > 0 ? 2 : 1);
-      const bVal = ((b.score ?? 0) / bPrice) * ((b.soldCount ?? 0) > 0 ? 2 : 1);
-      return bVal - aVal;
+      const aV = ((a.score ?? 0) / Math.max(a.med ?? 0, 0.01)) * ((a.soldCount ?? 0) > 0 ? 2 : 1);
+      const bV = ((b.score ?? 0) / Math.max(b.med ?? 0, 0.01)) * ((b.soldCount ?? 0) > 0 ? 2 : 1);
+      return bV - aV;
     },
   },
   diversified: {
-    label: 'Diversified', desc: 'Balanced portfolio across all rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
+    label: 'Diversified', desc: 'Balanced across rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
     sort: (a, b) => profitScore(b) - profitScore(a),
     diversified: true,
     defaults: { priceField: 'med', minPrice: '2' },
@@ -115,6 +105,11 @@ const STRATEGIES: Record<string, {
 };
 
 const PREMIUM_THRESHOLD = 50;
+const GEM_LABELS: Record<number, string> = {
+  1000000: '1M', 50000000: '50M', 100000000: '100M', 300000000: '300M',
+  500000000: '500M', 1000000000: '1B', 1500000000: '1.5B', 2000000000: '2B',
+};
+const GEM_OPTIONS = Object.entries(GEM_LABELS).map(([v, l]) => ({ value: Number(v), label: l }));
 
 function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [activeStrategy, setActiveStrategy] = useState<string>('allstar');
@@ -140,7 +135,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return Array.from(set).sort();
   }, [data]);
 
-  /* ─── Filter recommendations ─── */
+  /* ─── Filter ─── */
   const filtered = useMemo(() => {
     if (!data?.recommendations) return [];
     const lo = parseFloat(filterMinPrice) || 0;
@@ -154,25 +149,19 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       if (rarity !== 'all' && r.rarity !== rarity) return false;
       if (excludedRarities.has(r.rarity)) return false;
       const price = pf === 'min' ? (r.min ?? 0) : pf === 'max' ? (r.max ?? 0) : (r.med ?? 0);
-      // Premium items ($50+) always pass price filters UNLESS strategy disables premium pinning
-      if (!strat?.noPremiumPin && (r.med ?? 0) >= PREMIUM_THRESHOLD) {
-        return (r.listings ?? 0) >= ml;
-      }
+      if (!strat?.noPremiumPin && (r.med ?? 0) >= PREMIUM_THRESHOLD) return (r.listings ?? 0) >= ml;
       return price >= lo && price <= hi && (r.listings ?? 0) >= ml;
     });
   }, [data, filterMinPrice, filterMaxPrice, filterPriceField, minListings, rarity, excludedRarities, config.blacklisted, strat]);
 
-  /* ─── Sort + cap results ─── */
+  /* ─── Sort ─── */
   const results = useMemo(() => {
     const sortFn = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
     const maxN = parseInt(maxItems) || 50;
 
     if (strat?.diversified) {
       const byRarity: Record<string, Recommendation[]> = {};
-      for (const r of filtered) {
-        if (!byRarity[r.rarity]) byRarity[r.rarity] = [];
-        byRarity[r.rarity].push(r);
-      }
+      for (const r of filtered) { if (!byRarity[r.rarity]) byRarity[r.rarity] = []; byRarity[r.rarity].push(r); }
       const result: Recommendation[] = [];
       const rarities = Object.keys(byRarity).sort((a, b) => getRarityWeight(a) - getRarityWeight(b));
       const totalWeight = rarities.reduce((sum, r) => sum + (11 - getRarityWeight(r)), 0);
@@ -183,11 +172,9 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         result.push(...byRarity[rar].slice(0, slots));
       }
       const seen = new Set<string>();
-      return result.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; })
-        .sort(sortFn).slice(0, maxN);
+      return result.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; }).sort(sortFn).slice(0, maxN);
     }
 
-    // Premium pinning: $50+ items at top (unless noPremiumPin)
     if (!strat?.noPremiumPin) {
       const premium = filtered.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
       const pool = filtered.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
@@ -200,44 +187,48 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       return combined.slice(0, maxN);
     }
 
-    // No premium pinning — just sort by strategy
     const sorted = [...filtered].sort(sortFn);
     const seen = new Set<string>();
     return sorted.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; }).slice(0, maxN);
   }, [filtered, strat, maxItems]);
 
-  /* ─── Display results (with user removals) ─── */
   const displayResults = useMemo(() => results.filter(r => !removedItems.has(r.name)), [results, removedItems]);
 
-  /* ─── Strategy-aware min_value ─── */
+  /* ─── Strategy-aware gem budget ─── */
   const getMinValue = (r: Recommendation) => {
     if (minValueOverrides[r.name] != null) return minValueOverrides[r.name];
     if (strat?.gemPrice) return smartMinValue(r, strat.gemPrice(r));
     return smartMinValue(r);
   };
 
-  /* ─── Generate config + download ─── */
+  /* ─── Config summary stats ─── */
+  const summary = useMemo(() => {
+    const premium = displayResults.filter(r => (r.med ?? 0) >= 20).length;
+    const mid = displayResults.filter(r => (r.med ?? 0) >= 5 && (r.med ?? 0) < 20).length;
+    const cheap = displayResults.filter(r => (r.med ?? 0) < 5).length;
+    const totalSold = displayResults.reduce((s, r) => s + (r.soldCount ?? 0), 0);
+    const mutOverrides = displayResults.reduce((s, r) => {
+      const adv = getMutationAdvisory(r);
+      return s + adv.filter(a => a.needsOverride).length;
+    }, 0);
+    return { premium, mid, cheap, totalSold, mutOverrides, total: displayResults.length };
+  }, [displayResults]);
+
+  /* ─── Generate + download ─── */
   const generateAndDownload = () => {
     const wl: WLItem[] = displayResults.map((r: Recommendation) => {
       if (!r?.name) return null as any;
-      const item: WLItem = {
-        pet_name: r.name,
-        priority: computePriority(r),
-        min_value: getMinValue(r),
-      };
+      const item: WLItem = { pet_name: r.name, priority: computePriority(r), min_value: getMinValue(r) };
       const advisory = getMutationAdvisory(r);
       const overrides = advisory.filter(a => a?.needsOverride);
       if (overrides.length > 0) {
         item.mutations = {};
         for (const o of overrides) {
-          if (o?.mutation && typeof o.recommendedOverride === 'number') {
-            item.mutations[o.mutation] = o.recommendedOverride;
-          }
+          if (o?.mutation && typeof o.recommendedOverride === 'number') item.mutations[o.mutation] = o.recommendedOverride;
         }
       }
       return item;
     }).filter((w: WLItem | null) => w !== null);
-
     const genConfig: Config = { whitelisted: wl, blacklisted: config.blacklisted, version: '1.0' };
     setConfig(genConfig);
     downloadConfigJSON(genConfig, showToast);
@@ -248,18 +239,11 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     if (isSaving) return;
     setIsSaving(true);
     try {
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ whitelisted: config.whitelisted, blacklisted: config.blacklisted }),
-      });
+      const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ whitelisted: config.whitelisted, blacklisted: config.blacklisted }) });
       const result = await res.json();
-      if (res.ok && result.success) {
-        showToast(`Saved ${result.whitelisted} items + ${result.blacklisted} blacklisted`);
-      } else {
-        showToast(`Save failed: ${result.error || 'unknown error'}`);
-      }
-    } catch { showToast('Save failed — network error'); }
+      if (res.ok && result.success) showToast(`Saved ${result.whitelisted} items + ${result.blacklisted} blacklisted`);
+      else showToast(`Save failed: ${result.error || 'unknown error'}`);
+    } catch { showToast('Save failed'); }
     finally { setIsSaving(false); }
   };
 
@@ -269,32 +253,23 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     input.type = 'file'; input.accept = '.json';
     input.onchange = (e: Event) => {
       const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      if (file.size > 5 * 1024 * 1024) { showToast('File too large (max 5MB)'); return; }
+      if (!file || file.size > 5 * 1024 * 1024) { if (file) showToast('File too large'); return; }
       const reader = new FileReader();
       reader.onload = (ev) => {
         try {
           const imported = JSON.parse(ev.target?.result as string);
-          if (!imported?.whitelisted || !Array.isArray(imported.whitelisted)) {
-            showToast('Invalid config: missing whitelisted array'); return;
-          }
+          if (!imported?.whitelisted || !Array.isArray(imported.whitelisted)) { showToast('Invalid config'); return; }
           const wl: WLItem[] = imported.whitelisted.map((w: any, i: number) => {
             const pet_name = (w?.pet_name || w?.name || '').toString().trim();
-            const priority = typeof w?.priority === 'number' ? w.priority : i;
-            const min_value = typeof w?.min_value === 'number' && w.min_value > 0 ? w.min_value : 1000000;
-            const item: WLItem = { pet_name, priority, min_value };
+            const item: WLItem = { pet_name, priority: typeof w?.priority === 'number' ? w.priority : i, min_value: typeof w?.min_value === 'number' && w.min_value > 0 ? w.min_value : 1000000 };
             if (w?.mutations && typeof w.mutations === 'object') {
               const muts: Record<string, number> = {};
-              for (const [k, v] of Object.entries(w.mutations)) {
-                if (typeof v === 'number' && v > 0) muts[k] = v;
-              }
+              for (const [k, v] of Object.entries(w.mutations)) { if (typeof v === 'number' && v > 0) muts[k] = v; }
               if (Object.keys(muts).length > 0) item.mutations = muts;
             }
             return item;
           }).filter((w: WLItem) => w.pet_name.length > 0);
-          const bl: string[] = Array.isArray(imported.blacklisted)
-            ? imported.blacklisted.filter((b: unknown) => typeof b === 'string' && (b as string).trim().length > 0).map((b: string) => b.trim())
-            : [];
+          const bl = Array.isArray(imported.blacklisted) ? imported.blacklisted.filter((b: unknown) => typeof b === 'string' && (b as string).trim().length > 0).map((b: string) => b.trim()) : [];
           setConfig({ whitelisted: wl, blacklisted: bl, version: '1.0' });
           showToast(`Imported ${wl.length} items`);
         } catch (e) { showToast('Failed to parse: ' + (e instanceof Error ? e.message : 'unknown')); }
@@ -307,9 +282,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const addToBlacklist = (name: string) => {
     const trimmed = (name || '').trim();
     if (!trimmed) return;
-    if (config.blacklisted.some((b: string) => b.toLowerCase() === trimmed.toLowerCase())) {
-      showToast(`"${trimmed}" already blacklisted`); return;
-    }
+    if (config.blacklisted.some((b: string) => b.toLowerCase() === trimmed.toLowerCase())) { showToast(`"${trimmed}" already blacklisted`); return; }
     setConfig((c: Config) => ({ ...c, blacklisted: [...c.blacklisted, trimmed] }));
     showToast(`Blacklisted "${trimmed}"`);
   };
@@ -318,7 +291,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     setActiveStrategy(id);
     setRemovedItems(new Set());
     setMinValueOverrides({});
-    // Apply strategy's default filter settings
     const s = STRATEGIES[id];
     if (s?.defaults) {
       if (s.defaults.priceField) setFilterPriceField(s.defaults.priceField);
@@ -331,33 +303,28 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   /* ─── Data freshness ─── */
   const dataFreshness = useMemo(() => {
     if (!data?.meta) return null;
-    const total = data.meta.totalListings || 0;
-    const unique = data.meta.uniqueBrainrots || 0;
     const runs = data.meta.scrapeRuns || [];
     const lastCompleted = runs.find((r: any) => r.status === 'completed');
     const lastScrapeAt = lastCompleted?.completed_at || lastCompleted?.started_at || null;
     const hoursAgo = lastScrapeAt ? Math.floor((Date.now() - new Date(lastScrapeAt).getTime()) / 3600000) : null;
-    const isStale = hoursAgo === null || hoursAgo > 24;
-    return { total, unique, hoursAgo, isStale };
+    return { total: data.meta.totalListings || 0, unique: data.meta.uniqueBrainrots || 0, hoursAgo, isStale: hoursAgo === null || hoursAgo > 24 };
   }, [data]);
+
+  const priceFieldLabel = filterPriceField === 'min' ? 'Min' : filterPriceField === 'max' ? 'Max' : 'Median';
 
   return (
     <div className="d-flex flex-col gap-4">
 
       {/* ─── Data freshness ─── */}
       {dataFreshness && (
-        <div style={{ padding: '8px 14px', borderRadius: 8, background: dataFreshness.isStale ? 'rgba(245, 158, 11, 0.1)' : 'rgba(0, 214, 143, 0.08)', border: `1px solid ${dataFreshness.isStale ? 'rgba(245, 158, 11, 0.3)' : 'rgba(0, 214, 143, 0.2)'}` }}>
-          <div className="d-flex items-center gap-2">
-            <div>
-              <span className="text-sm fw-600" style={{ color: dataFreshness.isStale ? '#f59e0b' : '#00d68f' }}>
-                {dataFreshness.isStale ? 'Data may be stale' : 'Data is fresh'}
-              </span>
-              <span className="text-xs text-muted" style={{ marginLeft: 8 }}>
-                {dataFreshness.total.toLocaleString()} listings · {dataFreshness.unique} pets
-                {dataFreshness.hoursAgo !== null ? ` · ${dataFreshness.hoursAgo}h ago` : ''}
-              </span>
-            </div>
-          </div>
+        <div style={{ padding: '8px 14px', borderRadius: 8, background: dataFreshness.isStale ? 'rgba(245,158,11,0.1)' : 'rgba(0,214,143,0.08)', border: `1px solid ${dataFreshness.isStale ? 'rgba(245,158,11,0.3)' : 'rgba(0,214,143,0.2)'}` }}>
+          <span className="text-sm fw-600" style={{ color: dataFreshness.isStale ? '#f59e0b' : '#00d68f' }}>
+            {dataFreshness.isStale ? 'Data may be stale' : 'Data is fresh'}
+          </span>
+          <span className="text-xs text-muted" style={{ marginLeft: 8 }}>
+            {dataFreshness.total.toLocaleString()} listings · {dataFreshness.unique} pets
+            {dataFreshness.hoursAgo !== null ? ` · ${dataFreshness.hoursAgo}h ago` : ''}
+          </span>
         </div>
       )}
 
@@ -385,7 +352,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         </div>
       </div>
 
-      {/* ─── Filters (collapsed) ─── */}
+      {/* ─── Filters ─── */}
       <div className="filter-panel">
         <div className="filter-panel-header" onClick={() => setShowFilters(!showFilters)} role="button" tabIndex={0} aria-expanded={showFilters}
           onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setShowFilters(!showFilters))}>
@@ -400,7 +367,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           <div className="filter-panel-body flex-col gap-3">
             <div className="grid-filters">
               <div>
-                <label className="config-label">Filter By</label>
+                <label className="config-label">Price Column</label>
                 <select className="select w-full" value={filterPriceField} onChange={e => setFilterPriceField(e.target.value as 'min' | 'med' | 'max')}>
                   <option value="min">Min Price</option>
                   <option value="med">Median Price</option>
@@ -408,11 +375,11 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                 </select>
               </div>
               <div>
-                <label className="config-label">Min $ ({filterPriceField === 'min' ? 'Min' : filterPriceField === 'med' ? 'Med' : 'Max'})</label>
+                <label className="config-label">{priceFieldLabel} From ($)</label>
                 <input className="input" type="number" value={filterMinPrice} onChange={e => setFilterMinPrice(Math.max(0, parseFloat(e.target.value) || 0).toString())} min="0" />
               </div>
               <div>
-                <label className="config-label">Max $ ({filterPriceField === 'min' ? 'Min' : filterPriceField === 'med' ? 'Med' : 'Max'})</label>
+                <label className="config-label">{priceFieldLabel} To ($)</label>
                 <input className="input" type="number" value={filterMaxPrice} onChange={e => setFilterMaxPrice(Math.max(0, parseFloat(e.target.value) || 99999).toString())} min="0" />
               </div>
               <div>
@@ -432,7 +399,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
               </div>
             </div>
 
-            {/* Exclude Rarities */}
             {allRarities.length > 0 && (
               <div>
                 <div className="d-flex justify-between items-center mb-2">
@@ -451,7 +417,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
               </div>
             )}
 
-            {/* Blacklist */}
             <div>
               <div className="d-flex justify-between items-center mb-2">
                 <span className="text-sm fw-600 text-red">Blacklist</span>
@@ -481,13 +446,14 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         )}
       </div>
 
-      {/* ─── Results table + download ─── */}
+      {/* ─── Results ─── */}
       <div className="preview-container">
         <div className="preview-header" style={{ background: strat?.gradient || undefined }}>
           <div className="d-flex items-center gap-2 flex-wrap">
             <span className="text-xl">{strat?.icon}</span>
             <span className="fw-700 text-lg" style={{ color: strat?.color || 'var(--text)' }}>{strat?.label}</span>
             <span className="text-md text-sub">{displayResults.length} items</span>
+            {summary.mutOverrides > 0 && <span className="pill tag-warn">{summary.mutOverrides} mutation overrides</span>}
           </div>
           <div className="d-flex gap-2 flex-wrap">
             <button type="button" className="btn-cta" onClick={generateAndDownload} disabled={displayResults.length === 0}>
@@ -497,12 +463,22 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           </div>
         </div>
 
+        {/* Pre-download summary */}
+        {displayResults.length > 0 && (
+          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: '0.75rem', color: 'var(--text3)' }}>
+            {summary.premium > 0 && <span><strong className="text-green">{summary.premium}</strong> always-buy ($20+, 1M gems)</span>}
+            {summary.mid > 0 && <span><strong>{summary.mid}</strong> mid-range ($5-20)</span>}
+            {summary.cheap > 0 && <span><strong>{summary.cheap}</strong> budget (&lt;$5)</span>}
+            <span><strong>{summary.totalSold.toLocaleString()}</strong> total sold (30d)</span>
+          </div>
+        )}
+
         {displayResults.length === 0 ? (
           <div className="empty-state">No items match your filters.</div>
         ) : (
           <div className="preview-body">
             {removedItems.size > 0 && (
-              <div className="d-flex justify-between items-center" style={{ padding: '6px 12px', background: 'rgba(245, 158, 11, 0.08)', borderRadius: 6, marginBottom: 8 }}>
+              <div className="d-flex justify-between items-center" style={{ padding: '6px 12px', background: 'rgba(245,158,11,0.08)', borderRadius: 6, marginBottom: 8 }}>
                 <span className="text-xs text-muted">{removedItems.size} removed</span>
                 <button type="button" className="btn btn-sm" onClick={() => setRemovedItems(new Set())} style={{ fontSize: '0.7rem' }}>Undo All</button>
               </div>
@@ -513,13 +489,17 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                   <th className="w-30" role="columnheader">#</th>
                   <th className="w-28"></th>
                   <th>Name</th><th>Rarity</th>
-                  <th>Min $</th><th>Med $</th><th>Max $</th><th>Sold</th><th>Gems</th><th></th>
+                  <th>Min $</th><th>Med $</th><th>Max $</th>
+                  <th>Listings</th><th>Sold</th><th>Pri</th><th>Gems</th><th></th>
                 </tr></thead>
                 <tbody role="rowgroup">
                   {displayResults.map((r: Recommendation, i: number) => {
                     if (!r?.name) return null;
+                    const isPremium = (r.med ?? 0) >= 20;
+                    const minVal = getMinValue(r);
+                    const pri = computePriority(r);
                     return (
-                      <tr key={`config-${r.name}`} role="row">
+                      <tr key={`config-${r.name}`} role="row" style={isPremium ? { background: 'rgba(0,214,143,0.03)' } : undefined}>
                         <td className="text-muted text-mono">{i + 1}</td>
                         <td><ImageThumb src={r.imageUrl || ''} size={22} /></td>
                         <td className="fw-600">{r.name}</td>
@@ -527,19 +507,15 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                         <td className="text-green text-mono">{fmtPrice(r.min ?? 0)}</td>
                         <td className="text-mono">{fmtPrice(r.med ?? 0)}</td>
                         <td className="text-red text-mono">{fmtPrice(r.max ?? 0)}</td>
+                        <td className="text-muted">{r.listings ?? 0}</td>
                         <td className="text-muted">{r.soldCount ?? 0}</td>
+                        <td className="text-mono text-xs" style={{ color: pri <= 25 ? 'var(--green)' : pri <= 50 ? 'var(--gold)' : 'var(--text3)' }}>{pri}</td>
                         <td>
-                          <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.75rem', padding: '2px 4px', minWidth: 80 }}
-                            value={getMinValue(r)} aria-label={`Gem budget for ${r.name}`}
+                          <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.75rem', padding: '2px 4px', minWidth: 72 }}
+                            value={minVal} aria-label={`Gem budget for ${r.name}`}
                             onChange={e => setMinValueOverrides(prev => ({ ...prev, [r.name]: parseInt(e.target.value) }))}>
-                            <option value={1000000}>1M</option>
-                            <option value={50000000}>50M</option>
-                            <option value={100000000}>100M</option>
-                            <option value={300000000}>300M</option>
-                            <option value={500000000}>500M</option>
-                            <option value={1000000000}>1B</option>
-                            <option value={1500000000}>1.5B</option>
-                            <option value={2000000000}>2B</option>
+                            {GEM_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            {!GEM_LABELS[minVal] && <option value={minVal}>{fmtMinValue(minVal)}</option>}
                           </select>
                         </td>
                         <td>
