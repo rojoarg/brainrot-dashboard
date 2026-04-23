@@ -5,6 +5,51 @@ import { RARITY_ORDER, RARITY_WEIGHT, MUTATION_MULTIPLIERS } from './constants';
 export const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
 
 /**
+ * Returns the highest mutation median price for a recommendation.
+ * Used to catch valuable mutations even when the base pet is cheap.
+ * e.g. Money Money Puggy base=$1 but Cursed=$30 → returns 30.
+ */
+export function getMaxMutationPrice(rec: Recommendation | null | undefined): number {
+  if (!rec?.bestCombos || rec.bestCombos.length === 0) return 0;
+  let max = 0;
+  for (const c of rec.bestCombos) {
+    const m = c.mut || c.mutation || 'None';
+    if (m === 'None') continue;
+    const med = c.med ?? c.medianPrice ?? 0;
+    if (isFinite(med) && med > max) max = med;
+  }
+  return max;
+}
+
+/**
+ * Returns a summary of mutation data for display.
+ * Shows count of mutations with listings and the highest-value mutation.
+ */
+export function getMutationSummary(rec: Recommendation | null | undefined): { count: number; maxPrice: number; maxName: string; totalListings: number } {
+  if (!rec?.bestCombos || rec.bestCombos.length === 0) return { count: 0, maxPrice: 0, maxName: '', totalListings: 0 };
+  let count = 0;
+  let maxPrice = 0;
+  let maxName = '';
+  let totalListings = 0;
+  const seen = new Set<string>();
+  for (const c of rec.bestCombos) {
+    const m = c.mut || c.mutation || 'None';
+    if (m === 'None') continue;
+    if (seen.has(m)) continue;
+    seen.add(m);
+    count++;
+    const med = c.med ?? c.medianPrice ?? 0;
+    const n = c.n ?? c.count ?? 0;
+    totalListings += n;
+    if (isFinite(med) && med > maxPrice) {
+      maxPrice = med;
+      maxName = m;
+    }
+  }
+  return { count, maxPrice, maxName, totalListings };
+}
+
+/**
  * Unified priority calculator — used by BOTH ConfigTab and page.tsx addToWL.
  * Lower number = higher priority (0 is first).
  *
@@ -84,20 +129,40 @@ export const raritySort = (a: string, b: string) =>
   (RARITY_ORDER.indexOf(b) === -1 ? 99 : RARITY_ORDER.indexOf(b));
 
 /**
+ * Gem budget mode — different strategies need different gem tiers.
+ *
+ * 'default'  = All-Star, Sniper, Whale, Trending, Diversified
+ *              Full gem budgets for competitive buying
+ * 'farmer'   = Farmer
+ *              Uses p25 pricing, tighter gem budgets (volume focus)
+ * 'budget'   = Budget
+ *              Tightest gem budgets, only buy cheap deals
+ * 'flipper'  = Flipper
+ *              Uses min price, moderate budgets (buy low)
+ */
+export type GemMode = 'default' | 'farmer' | 'budget' | 'flipper';
+
+/**
  * Smart min_value calculator — determines the gem budget for the auto-joiner.
  *
  * INVERTED logic: expensive USD items get LOW gem thresholds (always buy —
  * a $440 Skibidi Toilet is a goldmine at any gem price). Cheap USD items get
- * HIGH gem thresholds (common trades, need bigger gem budgets to compete).
+ * HIGHER gem thresholds because they're commonly traded for gems in-game.
  *
- * Think of it as: premium items are ALWAYS worth grabbing, so min_value is
- * just the floor (1M). Cheaper items need appropriate gem budgets because
- * they're commonly traded for gems in-game.
+ * Strategy-aware: Farmer/Budget use tighter, more appropriate tiers.
+ * Premium items ($20+) ALWAYS get 1M across all strategies — these are
+ * no-brainer grabs regardless of strategy.
  *
  * @param rec Recommendation or Brainrot with price data
+ * @param priceOverride Optional: override which price to use for tier calc
+ * @param mode Strategy gem mode — controls which tier table to use
  * @returns min_value in gems (always ≥ 1,000,000)
  */
-export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; p25?: number; rarity?: string; flipScore?: number; listings?: number; medianPrice?: number; minPrice?: number } | null, priceOverride?: number): number {
+export function smartMinValue(
+  rec?: { min?: number; med?: number; p10?: number; p25?: number; rarity?: string; flipScore?: number; listings?: number; medianPrice?: number; minPrice?: number } | null,
+  priceOverride?: number,
+  mode: GemMode = 'default'
+): number {
   if (!rec) return 1000000;
 
   // Use medianPrice (from Brainrot) or med (from Recommendation)
@@ -107,22 +172,80 @@ export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; 
   // If no price data, default to 1M (floor)
   if (med <= 0 && min <= 0) return 1000000;
 
-  // Allow strategy to override which price drives the gem budget
-  // e.g. Farmer uses p25 (25th percentile — realistic cheap price, avoids outlier lowballs)
-  const price = priceOverride ?? (med > 0 ? med : min);
+  // Strategy-aware price selection:
+  // - Farmer uses p25 (25th percentile — realistic cheap price, avoids lowball outliers)
+  // - Flipper uses min (buy the cheapest listing)
+  // - Budget uses p25 if available, else min
+  // - Default uses median
+  let price: number;
+  if (priceOverride != null && priceOverride > 0) {
+    price = priceOverride;
+  } else if (mode === 'farmer') {
+    price = rec.p25 ?? rec.min ?? med;
+  } else if (mode === 'flipper') {
+    price = rec.min ?? med;
+  } else if (mode === 'budget') {
+    price = rec.p25 ?? rec.min ?? med;
+  } else {
+    price = med > 0 ? med : min;
+  }
 
-  // Simple human logic:
-  // Worth real money ($20+)? ALWAYS grab it. 1M gems = lowest possible.
-  // A $40 Dragon or $440 Skibidi Toilet is a goldmine at ANY gem price.
-  // Only cheap items need gem budgets for common in-game trades.
-  //
-  // $20+  → 1M    (always buy — worth real money, no-brainer)
-  // $10+  → 1B    (good items — standard gem budget)
-  // $5+   → 1.5B  (mid-range trades)
-  // $2+   → 2B    (cheap common trades — max gem budget)
-  // <$2   → 1M    (junk floor — shouldn't be in config)
-
+  // ═══ UNIVERSAL RULE: Premium items are ALWAYS worth grabbing ═══
+  // A $40 Dragon, $440 Skibidi Toilet, $200 Meowl — these are goldmines
+  // at ANY gem price. Every strategy should grab these at 1M (floor).
   if (price >= 20) return 1000000;
+
+  // ═══ STRATEGY-SPECIFIC GEM TIERS ═══
+
+  if (mode === 'farmer') {
+    // Farmer = VOLUME buying, cheap items, conservative gem spend.
+    // A $5 Garama shouldn't cost 1.5B gems to farm — that's All-Star money.
+    // Farmer buys in bulk at modest gem prices.
+    //
+    // $10-20  → 50M    (solid finds, worth moderate gems)
+    // $5-10   → 100M   (bread and butter farming range)
+    // $2-5    → 300M   (cheap farm targets)
+    // <$2     → 50M    (filler)
+    if (price >= 10) return 50000000;
+    if (price >= 5) return 100000000;
+    if (price >= 2) return 300000000;
+    return 50000000;
+  }
+
+  if (mode === 'budget') {
+    // Budget = CHEAPEST possible gem spend, high ROI focus.
+    // Even tighter than Farmer — only spend gems when the deal is great.
+    //
+    // $10-20  → 50M
+    // $5-10   → 50M
+    // $2-5    → 100M
+    // $1-2    → 50M
+    if (price >= 5) return 50000000;
+    if (price >= 2) return 100000000;
+    return 50000000;
+  }
+
+  if (mode === 'flipper') {
+    // Flipper = buy low sell high, moderate gem spend.
+    // Slightly lower than default since you're targeting underpriced listings.
+    //
+    // $10-20  → 500M
+    // $5-10   → 1B
+    // $2-5    → 1.5B
+    // <$2     → 1M
+    if (price >= 10) return 500000000;
+    if (price >= 5) return 1000000000;
+    if (price >= 2) return 1500000000;
+    return 1000000;
+  }
+
+  // ═══ DEFAULT (All-Star, Sniper, Whale, Trending, Diversified) ═══
+  // Full competitive gem budgets for serious buying.
+  //
+  // $10-20  → 1B    (good items — standard gem budget)
+  // $5-10   → 1.5B  (mid-range trades)
+  // $2-5    → 2B    (cheap common trades — max gem budget)
+  // <$2     → 1M    (junk floor — shouldn't be in config)
   if (price >= 10) return 1000000000;
   if (price >= 5) return 1500000000;
   if (price >= 2) return 2000000000;
@@ -130,7 +253,22 @@ export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; 
 }
 
 /* ─── Mutation Advisory ─── */
-export function getMutationAdvisory(rec: Recommendation): MutationAdvisory[] {
+/**
+ * Analyzes ALL mutations for a recommendation and returns advisory data.
+ *
+ * Key change from v2: ALL mutations with listings are included (not just 1.5x overrides).
+ * Each mutation gets its own gem budget based on its own median price, because
+ * mutations can fundamentally change an item's value (e.g., Cyber Garama vs base Garama
+ * can be 5-10x different).
+ *
+ * `needsOverride` is now true for ANY mutation with at least 1 listing AND a different
+ * price from base, ensuring the config always has per-mutation gem budgets.
+ *
+ * @param rec Recommendation with bestCombos data
+ * @param gemMode Optional gem mode for strategy-aware gem pricing
+ * @returns Array of mutation advisories, sorted by price ratio (highest first)
+ */
+export function getMutationAdvisory(rec: Recommendation, gemMode: GemMode = 'default'): MutationAdvisory[] {
   if (!rec?.bestCombos || rec.bestCombos.length === 0) return [];
 
   const baseCombos = rec.bestCombos.filter(c => c.mut === 'None' || !c.mut);
@@ -157,10 +295,9 @@ export function getMutationAdvisory(rec: Recommendation): MutationAdvisory[] {
     if (!isFinite(priceRatio) || isNaN(priceRatio)) continue;
     const multiplier = MUTATION_MULTIPLIERS[mut] || 0;
 
-    // Use smartMinValue-style tiered conversion for the mutation's USD price.
-    // This ensures mutation overrides use the same USD→gems logic as base items.
-    // We create a synthetic rec with the mutation's median price to get accurate gems.
-    const recommendedOverride = smartMinValue({ med: avgMed, rarity: rec.rarity });
+    // Each mutation gets its OWN gem budget based on its own median price.
+    // Strategy-aware: Farmer mutations get Farmer gem tiers, etc.
+    const recommendedOverride = smartMinValue({ med: avgMed, rarity: rec.rarity }, undefined, gemMode);
 
     advisories.push({
       mutation: mut,
@@ -170,7 +307,10 @@ export function getMutationAdvisory(rec: Recommendation): MutationAdvisory[] {
       priceRatio: Math.round(priceRatio * 10) / 10,
       listings: totalListings,
       recommendedOverride,
-      needsOverride: priceRatio >= 1.5 && totalListings >= 1,
+      // Include ALL mutations with listings — mutations are fundamentally
+      // different items that need their own gem budgets, not just overrides
+      // at extreme price ratios. Even a 1.2x mutation should have its own budget.
+      needsOverride: totalListings >= 1,
     });
   }
 
@@ -178,7 +318,7 @@ export function getMutationAdvisory(rec: Recommendation): MutationAdvisory[] {
 }
 
 /* ─── Config Helpers ─── */
-export const buildConfigJSON = (config: Config, recommendations?: Recommendation[]) => ({
+export const buildConfigJSON = (config: Config, recommendations?: Recommendation[], gemMode: GemMode = 'default') => ({
   blacklisted: config.blacklisted || [],
   whitelisted: config.whitelisted.map((w: WLItem, i: number) => {
     const base: { pet_name: string; priority: number; min_value: number; mutations?: Record<string, number> } = {
@@ -186,17 +326,19 @@ export const buildConfigJSON = (config: Config, recommendations?: Recommendation
       priority: w.priority ?? i,
       min_value: w.min_value || 1000000,
     };
-    // Include mutations: either from the WLItem itself or computed from recommendations
+    // Include mutations: either from the WLItem itself or computed from recommendations.
+    // ALL mutations with listings get individual gem budgets — mutations are
+    // fundamentally different items that can be worth wildly different amounts.
     if (w.mutations && Object.keys(w.mutations).length > 0) {
       base.mutations = w.mutations;
     } else if (recommendations) {
       const rec = recommendations.find(r => r.name.toLowerCase() === w.pet_name.toLowerCase());
       if (rec) {
-        const advisory = getMutationAdvisory(rec);
-        const overrides = advisory.filter(a => a.needsOverride);
-        if (overrides.length > 0) {
+        const advisory = getMutationAdvisory(rec, gemMode);
+        const withOverrides = advisory.filter(a => a.needsOverride);
+        if (withOverrides.length > 0) {
           base.mutations = {};
-          for (const o of overrides) {
+          for (const o of withOverrides) {
             base.mutations[o.mutation] = o.recommendedOverride;
           }
         }
@@ -207,8 +349,8 @@ export const buildConfigJSON = (config: Config, recommendations?: Recommendation
   version: '1.0',
 });
 
-export const downloadConfigJSON = (config: Config, toast?: (msg: string) => void, recommendations?: Recommendation[]) => {
-  const exportObj = buildConfigJSON(config, recommendations);
+export const downloadConfigJSON = (config: Config, toast?: (msg: string) => void, recommendations?: Recommendation[], gemMode: GemMode = 'default') => {
+  const exportObj = buildConfigJSON(config, recommendations, gemMode);
   const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

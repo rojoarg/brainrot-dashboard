@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { Config, DashData, Recommendation, WLItem } from '../../lib/types';
-import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority } from '../../lib/utils';
+import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority, getMaxMutationPrice, getMutationSummary, type GemMode } from '../../lib/utils';
 import { RarityBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -33,18 +33,18 @@ const STRATEGIES: Record<string, {
   sort: (a: Recommendation, b: Recommendation) => number;
   diversified?: boolean;
   autoMaxPrice?: number;
-  gemPrice?: (r: Recommendation) => number;
-  noPremiumPin?: boolean;
+  gemMode?: GemMode;
   defaults?: { priceField?: 'min' | 'med' | 'max'; minPrice?: string; maxPrice?: string };
 }> = {
   allstar: {
     label: 'All-Star', desc: 'Best overall value', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
+    gemMode: 'default',
     sort: (a, b) => profitScore(b) - profitScore(a),
     defaults: { priceField: 'med', minPrice: '2' },
   },
   farmer: {
     label: 'Farmer', desc: 'High volume, proven demand', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
-    noPremiumPin: true,
+    gemMode: 'farmer',
     defaults: { priceField: 'med', minPrice: '2' },
     sort: (a, b) => {
       const aS = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
@@ -54,6 +54,7 @@ const STRATEGIES: Record<string, {
   },
   flipper: {
     label: 'Flipper', desc: 'Buy low, sell high', icon: '\uD83D\uDCB0', color: '#45d0ff', gradient: 'linear-gradient(135deg, #45d0ff22, #0099cc22)',
+    gemMode: 'flipper',
     defaults: { priceField: 'min', minPrice: '2' },
     sort: (a, b) => {
       const aS = (a.flipScore || 0) * 3 + (a.roiPct ?? 0) * 0.15 + (a.spreadScore || 0) * 2 + ((a.soldCount ?? 0) > 0 ? 5 : 0) + ((a.listings ?? 0) >= 3 ? 3 : 0);
@@ -63,6 +64,7 @@ const STRATEGIES: Record<string, {
   },
   sniper: {
     label: 'Sniper', desc: 'Scarce high-value finds', icon: '\uD83C\uDFAF', color: '#ff4757', gradient: 'linear-gradient(135deg, #ff475722, #cc000022)',
+    gemMode: 'default',
     defaults: { priceField: 'med', minPrice: '5' },
     sort: (a, b) => {
       const aP = Math.min(10, Math.log10((a.med ?? 0) + 1) * 3);
@@ -73,12 +75,14 @@ const STRATEGIES: Record<string, {
   },
   whale: {
     label: 'Whale', desc: 'Premium $10+ items', icon: '\uD83D\uDC0B', color: '#a78bfa', gradient: 'linear-gradient(135deg, #a78bfa22, #7c3aed22)',
+    gemMode: 'default',
     defaults: { priceField: 'med', minPrice: '10' },
     sort: (a, b) => ((b.med ?? 0) + ((b.soldCount ?? 0) > 0 ? 10 : 0) + (b.sellerCount ?? 0) * 0.3)
                    - ((a.med ?? 0) + ((a.soldCount ?? 0) > 0 ? 10 : 0) + (a.sellerCount ?? 0) * 0.3),
   },
   trending: {
     label: 'Trending', desc: 'Hot items right now', icon: '\uD83D\uDD25', color: '#ff6b35', gradient: 'linear-gradient(135deg, #ff6b3522, #cc440022)',
+    gemMode: 'default',
     defaults: { priceField: 'med', minPrice: '0' },
     sort: (a, b) => ((b.trendingListings || 0) * 5 + (b.soldCount || 0) * 2 + (b.score ?? 0) * 0.3)
                    - ((a.trendingListings || 0) * 5 + (a.soldCount || 0) * 2 + (a.score ?? 0) * 0.3),
@@ -86,7 +90,7 @@ const STRATEGIES: Record<string, {
   budget: {
     label: 'Budget', desc: 'Under $5, high ROI', icon: '\uD83C\uDFF7\uFE0F', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b22, #d9790022)',
     autoMaxPrice: 5,
-    noPremiumPin: true,
+    gemMode: 'budget',
     defaults: { priceField: 'med', minPrice: '1', maxPrice: '5' },
     sort: (a, b) => {
       const aV = ((a.score ?? 0) / Math.max(a.med ?? 0, 0.01)) * ((a.soldCount ?? 0) > 0 ? 2 : 1);
@@ -96,6 +100,7 @@ const STRATEGIES: Record<string, {
   },
   diversified: {
     label: 'Diversified', desc: 'Balanced across rarities', icon: '\uD83C\uDFB2', color: '#06b6d4', gradient: 'linear-gradient(135deg, #06b6d422, #0891b222)',
+    gemMode: 'default',
     sort: (a, b) => profitScore(b) - profitScore(a),
     diversified: true,
     defaults: { priceField: 'med', minPrice: '2' },
@@ -104,8 +109,10 @@ const STRATEGIES: Record<string, {
 
 const PREMIUM_THRESHOLD = 50;
 const GEM_LABELS: Record<number, string> = {
-  1000000: '1M', 50000000: '50M', 100000000: '100M', 300000000: '300M',
-  500000000: '500M', 1000000000: '1B', 1500000000: '1.5B', 2000000000: '2B',
+  1000000: '1M', 10000000: '10M', 50000000: '50M', 100000000: '100M',
+  150000000: '150M', 200000000: '200M', 300000000: '300M', 400000000: '400M',
+  500000000: '500M', 600000000: '600M', 700000000: '700M', 800000000: '800M',
+  1000000000: '1B', 1500000000: '1.5B', 2000000000: '2B',
 };
 const GEM_OPTIONS = Object.entries(GEM_LABELS).map(([v, l]) => ({ value: Number(v), label: l }));
 
@@ -134,6 +141,9 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   }, [data]);
 
   /* ─── Filter ─── */
+  // MUTATION-AWARE: A pet passes the filter if its base price OR its highest
+  // mutation price meets the threshold. This prevents valuable mutations from
+  // being lost — e.g. Money Money Puggy base=$1 but Cursed=$30 must be included.
   const filtered = useMemo(() => {
     if (!data?.recommendations) return [];
     const lo = parseFloat(filterMinPrice) || 0;
@@ -147,12 +157,21 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       if (rarity !== 'all' && r.rarity !== rarity) return false;
       if (excludedRarities.has(r.rarity)) return false;
       const price = pf === 'min' ? (r.min ?? 0) : pf === 'max' ? (r.max ?? 0) : (r.med ?? 0);
-      if (!strat?.noPremiumPin && (r.med ?? 0) >= PREMIUM_THRESHOLD) return (r.listings ?? 0) >= ml;
+      // Premium items ($50+) ALWAYS pass — never miss a Dragon or Meowl
+      if ((r.med ?? 0) >= PREMIUM_THRESHOLD) return (r.listings ?? 0) >= ml;
+      // Check if ANY mutation of this pet is valuable enough to include.
+      // This catches "Money Money Puggy Cursed = $30" even when base = $1.
+      const maxMutPrice = getMaxMutationPrice(r);
+      if (maxMutPrice >= PREMIUM_THRESHOLD) return (r.listings ?? 0) >= ml;
+      if (maxMutPrice >= lo && maxMutPrice <= hi) return (r.listings ?? 0) >= ml;
       return price >= lo && price <= hi && (r.listings ?? 0) >= ml;
     });
   }, [data, filterMinPrice, filterMaxPrice, filterPriceField, minListings, rarity, excludedRarities, config.blacklisted, strat]);
 
   /* ─── Sort ─── */
+  // UNIVERSAL RULE: Premium items ($50+) ALWAYS float to top regardless of strategy.
+  // A Dragon, Meowl, Skibidi Toilet — these are ALWAYS first priority.
+  // Strategy only changes the sort ORDER within non-premium items and gem budgets.
   const results = useMemo(() => {
     const sortFn = strat?.sort || ((a: Recommendation, b: Recommendation) => b.score - a.score);
     const maxN = parseInt(maxItems) || 50;
@@ -170,33 +189,35 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         result.push(...byRarity[rar].slice(0, slots));
       }
       const seen = new Set<string>();
-      return result.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; }).sort(sortFn).slice(0, maxN);
-    }
-
-    if (!strat?.noPremiumPin) {
-      const premium = filtered.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
-      const pool = filtered.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
+      const deduped = result.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; });
+      // Still pin premium items at top even in diversified
+      const premium = deduped.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
+      const rest = deduped.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
       premium.sort((a, b) => (b.med ?? 0) - (a.med ?? 0));
-      pool.sort(sortFn);
-      const seen = new Set<string>();
-      const combined: Recommendation[] = [];
-      for (const r of premium) { if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); } }
-      for (const r of pool) { if (combined.length >= maxN) break; if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); } }
-      return combined.slice(0, maxN);
+      rest.sort(sortFn);
+      return [...premium, ...rest].slice(0, maxN);
     }
 
-    const sorted = [...filtered].sort(sortFn);
+    // ALL strategies: premium items pinned at top, then strategy sort for the rest.
+    // This ensures a Farmer NEVER misses a Dragon or Meowl at the top of their list.
+    const premium = filtered.filter(r => (r.med ?? 0) >= PREMIUM_THRESHOLD);
+    const pool = filtered.filter(r => (r.med ?? 0) < PREMIUM_THRESHOLD);
+    premium.sort((a, b) => (b.med ?? 0) - (a.med ?? 0));
+    pool.sort(sortFn);
     const seen = new Set<string>();
-    return sorted.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; }).slice(0, maxN);
+    const combined: Recommendation[] = [];
+    for (const r of premium) { if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); } }
+    for (const r of pool) { if (combined.length >= maxN) break; if (!seen.has(r.name)) { seen.add(r.name); combined.push(r); } }
+    return combined.slice(0, maxN);
   }, [filtered, strat, maxItems]);
 
   const displayResults = useMemo(() => results.filter(r => !removedItems.has(r.name)), [results, removedItems]);
 
   /* ─── Strategy-aware gem budget ─── */
+  const gemMode: GemMode = strat?.gemMode || 'default';
   const getMinValue = (r: Recommendation) => {
     if (minValueOverrides[r.name] != null) return minValueOverrides[r.name];
-    if (strat?.gemPrice) return smartMinValue(r, strat.gemPrice(r));
-    return smartMinValue(r);
+    return smartMinValue(r, undefined, gemMode);
   };
 
   /* ─── Config summary stats ─── */
@@ -206,7 +227,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     const cheap = displayResults.filter(r => (r.med ?? 0) < 5).length;
     const totalSold = displayResults.reduce((s, r) => s + (r.soldCount ?? 0), 0);
     const mutOverrides = displayResults.reduce((s, r) => {
-      const adv = getMutationAdvisory(r);
+      const adv = getMutationAdvisory(r, gemMode);
       return s + adv.filter(a => a.needsOverride).length;
     }, 0);
     return { premium, mid, cheap, totalSold, mutOverrides, total: displayResults.length };
@@ -217,11 +238,13 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     const wl: WLItem[] = displayResults.map((r: Recommendation) => {
       if (!r?.name) return null as any;
       const item: WLItem = { pet_name: r.name, priority: computePriority(r), min_value: getMinValue(r) };
-      const advisory = getMutationAdvisory(r);
-      const overrides = advisory.filter(a => a?.needsOverride);
-      if (overrides.length > 0) {
+      // ALL mutations with listings get individual gem budgets.
+      // Uses strategy-aware gem mode so Farmer mutations get Farmer gem tiers.
+      const advisory = getMutationAdvisory(r, gemMode);
+      const withOverrides = advisory.filter(a => a?.needsOverride);
+      if (withOverrides.length > 0) {
         item.mutations = {};
-        for (const o of overrides) {
+        for (const o of withOverrides) {
           if (o?.mutation && typeof o.recommendedOverride === 'number') item.mutations[o.mutation] = o.recommendedOverride;
         }
       }
@@ -229,7 +252,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     }).filter((w: WLItem | null) => w !== null);
     const genConfig: Config = { whitelisted: wl, blacklisted: config.blacklisted, version: '1.0' };
     setConfig(genConfig);
-    downloadConfigJSON(genConfig, showToast);
+    downloadConfigJSON(genConfig, showToast, data.recommendations, gemMode);
   };
 
   /* ─── Save to DB ─── */
@@ -468,7 +491,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
             {summary.premium > 0 && <span><strong className="text-green">{summary.premium}</strong> always-buy ($20+, 1M gems)</span>}
             {summary.mid > 0 && <span><strong>{summary.mid}</strong> mid-range ($5-20)</span>}
             {summary.cheap > 0 && <span><strong>{summary.cheap}</strong> budget (&lt;$5)</span>}
-            <span><strong>{summary.totalSold.toLocaleString()}</strong> total sold (30d)</span>
+            <span><strong>{summary.totalSold.toLocaleString()}</strong> sold (30d)</span>
+            {summary.mutOverrides > 0 && <span style={{ color: 'var(--cyan)' }}><strong>{summary.mutOverrides}</strong> mutation overrides</span>}
           </div>
         )}
 
@@ -489,7 +513,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                   <th className="w-28"></th>
                   <th>Name</th><th>Rarity</th>
                   <th>Min $</th><th>Med $</th><th>Max $</th>
-                  <th>Listings</th><th>Sold</th><th>Pri</th><th>Gems</th><th></th>
+                  <th>Listings</th><th>Sold</th><th>Muts</th><th>Pri</th><th>Gems</th><th></th>
                 </tr></thead>
                 <tbody role="rowgroup">
                   {displayResults.map((r: Recommendation, i: number) => {
@@ -497,17 +521,35 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                     const isPremium = (r.med ?? 0) >= 20;
                     const minVal = getMinValue(r);
                     const pri = computePriority(r);
+                    const mutSummary = getMutationSummary(r);
+                    const advisory = getMutationAdvisory(r, gemMode);
+                    const mutCount = advisory.filter(a => a.needsOverride).length;
                     return (
                       <tr key={`config-${r.name}`} role="row" style={isPremium ? { background: 'rgba(0,214,143,0.03)' } : undefined}>
                         <td className="text-muted text-mono">{i + 1}</td>
                         <td><ImageThumb src={r.imageUrl || ''} size={22} /></td>
-                        <td className="fw-600">{r.name}</td>
+                        <td className="fw-600">
+                          {r.name}
+                          {mutSummary.maxPrice >= PREMIUM_THRESHOLD && (r.med ?? 0) < PREMIUM_THRESHOLD && (
+                            <span className="tag tag-warn ml-1" title={`${mutSummary.maxName} mutation is $${mutSummary.maxPrice.toFixed(0)}`}>MUT$</span>
+                          )}
+                        </td>
                         <td><RarityBadge rarity={r.rarity || ''} /></td>
                         <td className="text-green text-mono">{fmtPrice(r.min ?? 0)}</td>
                         <td className="text-mono">{fmtPrice(r.med ?? 0)}</td>
                         <td className="text-red text-mono">{fmtPrice(r.max ?? 0)}</td>
                         <td className="text-muted">{r.listings ?? 0}</td>
                         <td className="text-muted">{r.soldCount ?? 0}</td>
+                        <td>
+                          {mutCount > 0 ? (
+                            <span className="text-mono text-xs" style={{ color: 'var(--cyan)' }} title={advisory.map(a => `${a.mutation}: ${fmtPrice(a.medianPrice)}`).join(', ')}>
+                              {mutCount}
+                              {mutSummary.maxPrice > 0 && <span className="text-muted"> ({fmtPrice(mutSummary.maxPrice)})</span>}
+                            </span>
+                          ) : (
+                            <span className="text-muted text-xs">—</span>
+                          )}
+                        </td>
                         <td className="text-mono text-xs" style={{ color: pri <= 25 ? 'var(--green)' : pri <= 50 ? 'var(--gold)' : 'var(--text3)' }}>{pri}</td>
                         <td>
                           <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.75rem', padding: '2px 4px', minWidth: 72 }}

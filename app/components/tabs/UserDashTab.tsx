@@ -132,7 +132,7 @@ function UserDashTab({ data, config, setConfig, showToast, openDetail, isOnWL, a
   }, [portfolio]);
 
   return (
-    <div className="d-flex flex-col gap-4">
+    <div className="d-flex flex-col gap-4 animate-fade-in">
       {/* User stats hero */}
       <div className="grid-stats stagger-in">
         <StatCard label="Watchlist Items" value={config.whitelisted.length} color="var(--gold)" />

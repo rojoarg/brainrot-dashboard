@@ -34,7 +34,7 @@ export default React.memo(function DetailTab({ data, selected, setSelected, isOn
   const goNext = useCallback(() => { if (currentIdx < recNames.length - 1) setSelected(recNames[currentIdx + 1]); }, [currentIdx, recNames]);
 
   if (!selected || !b) return (
-    <div className="glass-card p-4 text-center">
+    <div className="glass-card p-4 text-center animate-fade-in">
       <div className="text-sub mb-4">Select a brainrot to view details</div>
       <SearchInput value={detailSearch} onChange={setDetailSearch} placeholder="Search brainrots..." maxWidth={240} />
       <div className="d-flex flex-wrap gap-2 justify-center mt-3">
@@ -52,7 +52,7 @@ export default React.memo(function DetailTab({ data, selected, setSelected, isOn
   const bq = Math.max(1, parseInt(buyQty) || 1);
 
   return (
-    <div className="d-flex flex-col gap-4">
+    <div className="d-flex flex-col gap-4 animate-fade-in">
       {/* Nav bar */}
       <FilterBar>
         <button type="button" className="btn btn-sm text-md" onClick={goPrev} disabled={currentIdx <= 0} aria-label="Previous item">{'\u2190'} Prev</button>

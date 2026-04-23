@@ -21,7 +21,7 @@ export default React.memo(function SellersTab({ data, openDetail }: SellersTabPr
   }, [data, search, sortBy]);
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search sellers..." maxWidth={220} />
         <select className="select" value={sortBy} onChange={e => setSortBy(e.target.value)}>

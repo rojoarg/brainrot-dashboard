@@ -45,7 +45,7 @@ export default React.memo(function WatchlistTab({ data, config, openDetail, remo
   const totalOverrides = useMemo(() => items.reduce((s, i) => s + i.advisory.filter(a => a.needsOverride).length, 0), [items]);
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <div className="d-flex justify-between items-center mb-3 flex-wrap gap-2">
         <div className="d-flex items-center gap-3">
           <SearchInput value={search} onChange={setSearch} placeholder="Search watchlist..." maxWidth={200} />

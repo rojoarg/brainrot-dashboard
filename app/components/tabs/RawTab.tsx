@@ -19,7 +19,7 @@ function RawTab({ data }: RawTabProps) {
   }, [data, search]);
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <div className="d-flex gap-2 mb-3 items-center">
         <SearchInput value={search} onChange={setSearch} placeholder="Search by name or seller..." maxWidth={260} />
         <span className="text-md text-sub">{(data.rawListings?.length ?? 0).toLocaleString()} total · showing {filtered.length}</span>

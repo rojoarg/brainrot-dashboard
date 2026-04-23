@@ -26,7 +26,7 @@ function MutationsTab({ data }: MutationsTabProps) {
   }, [msStats]);
 
   return (
-    <div className="d-flex flex-col gap-6">
+    <div className="d-flex flex-col gap-6 animate-fade-in">
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search mutations..." maxWidth={220} />
         <span className="text-md text-sub">{mutArr.length} mutations · {msArr.length} M/s ranges</span>

@@ -58,7 +58,7 @@ export default React.memo(function RecsTab({ data, search, setSearch, openDetail
   };
 
   return (
-    <div className="d-flex flex-col gap-4">
+    <div className="d-flex flex-col gap-4 animate-fade-in">
       {/* Summary bar */}
       <div className="grid-stats stagger-in">
         <StatCard label="Results" value={summary.total} />

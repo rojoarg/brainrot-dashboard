@@ -66,7 +66,7 @@ function BrainrotsTab({
   );
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search brainrots..." maxWidth={260} />
         <select className="select" value={rarityFilter} onChange={e => setRarityFilter(e.target.value)}>

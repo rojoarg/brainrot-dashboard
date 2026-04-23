@@ -45,7 +45,7 @@ export default React.memo(function SoldTab({ data, openDetail }: SoldTabProps) {
   }, [marketChanges, search]);
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search sold/delisted..." maxWidth={220} />
         <div className="tab-nav d-flex">

@@ -19,7 +19,7 @@ function TrendingTab({ data, openDetail }: TrendingTabProps) {
     return trending.filter((t: TrendingItem) => t.name.toLowerCase().includes(q) || t.seller?.toLowerCase().includes(q));
   }, [trending, search]);
   return (
-    <div>
+    <div className="animate-fade-in">
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search trending..." maxWidth={220} />
         <span className="text-md text-sub">{filtered.length}{search ? ` / ${trending.length}` : ''} trending listings</span>
