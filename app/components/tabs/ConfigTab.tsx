@@ -93,6 +93,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [addPetInput, setAddPetInput] = useState('');
   const [manualPets, setManualPets] = useState<string[]>([]);
+  const [showPreview, setShowPreview] = useState(false);
 
   const strat = STRATEGIES[activeStrategy];
   const gemMode: GemMode = strat?.gemMode || 'default';
@@ -560,11 +561,12 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                   <th>Rarity</th>
                   <th>Score</th>
                   <th>Med $</th>
-                  <th>Min $</th>
+                  <th>p25 $</th>
                   <th>Listings</th>
                   <th>Sold</th>
+                  <th title="ROI at median vs min price">ROI</th>
+                  <th title={activeStrategy === 'farmer' ? 'Farm Score' : 'Flip Score'}>{activeStrategy === 'farmer' ? 'Farm' : 'Flip'}</th>
                   <th>Muts</th>
-                  <th>Pri</th>
                   <th>Gems</th>
                   <th></th>
                 </tr></thead>
@@ -574,7 +576,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                     const effectivePrice = Math.max(r.med ?? 0, getMaxMutationPrice(r));
                     const isPremium = effectivePrice >= PREMIUM_THRESHOLD;
                     const minVal = getMinValue(r);
-                    const pri = i; // Sequential priority = sorted position
                     const mutSummary = getMutationSummary(r);
                     const advisory = getMutationAdvisory(r, gemMode);
                     const mutCount = advisory.filter(a => a.needsOverride).length;
@@ -602,9 +603,13 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                           <td><RarityBadge rarity={r.rarity || ''} /></td>
                           <td className="text-mono text-xs" style={{ color: r.score >= 70 ? 'var(--gold)' : r.score >= 40 ? 'var(--text)' : 'var(--text3)' }}>{r.score}</td>
                           <td className="text-mono fw-600">{fmtPrice(r.med ?? 0)}</td>
-                          <td className="text-green text-mono">{fmtPrice(r.min ?? 0)}</td>
+                          <td className="text-mono text-muted">{r.p25 ? fmtPrice(r.p25) : '—'}</td>
                           <td className="text-muted">{r.listings ?? 0}</td>
                           <td style={{ color: (r.soldCount ?? 0) > 0 ? 'var(--accent2)' : 'var(--text3)' }}>{r.soldCount ?? 0}</td>
+                          <td className="text-mono text-xs" style={{ color: (r.roiPct ?? 0) >= 50 ? 'var(--green)' : (r.roiPct ?? 0) >= 20 ? 'var(--gold)' : 'var(--text3)' }}>{(r.roiPct ?? 0) > 0 ? `${r.roiPct}%` : '—'}</td>
+                          <td className="text-mono text-xs" style={{ color: (activeStrategy === 'farmer' ? (r.farmScore ?? 0) : (r.flipScore ?? 0)) >= 5 ? 'var(--cyan)' : 'var(--text3)' }}>
+                            {activeStrategy === 'farmer' ? (r.farmScore ?? 0).toFixed(1) : (r.flipScore ?? 0).toFixed(1)}
+                          </td>
                           <td>
                             {mutCount > 0 ? (
                               <span className="text-mono text-xs" style={{ color: 'var(--cyan)' }} title="Click row to expand mutations">
@@ -614,7 +619,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                               <span className="text-muted text-xs">—</span>
                             )}
                           </td>
-                          <td className="text-mono text-xs" style={{ color: pri <= 25 ? 'var(--green)' : pri <= 50 ? 'var(--gold)' : 'var(--text3)' }}>{pri}</td>
                           <td onClick={e => e.stopPropagation()}>
                             <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.7rem', padding: '2px 4px', minWidth: 68, minHeight: 28 }}
                               value={minVal} aria-label={`Gem budget for ${r.name}`}
@@ -631,7 +635,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                         {/* Expanded mutation details */}
                         {isExpanded && mutCount > 0 && (
                           <tr className="animate-fade-in">
-                            <td colSpan={14} style={{ padding: '0 12px 8px 44px', background: 'rgba(6,182,212,0.02)', borderBottom: '1px solid var(--border)' }}>
+                            <td colSpan={15} style={{ padding: '0 12px 8px 44px', background: 'rgba(6,182,212,0.02)', borderBottom: '1px solid var(--border)' }}>
                               <div className="text-xs fw-600 text-muted mb-1" style={{ marginTop: 4 }}>Mutation Gem Budgets:</div>
                               <div className="d-flex flex-wrap gap-2">
                                 {advisory.filter(a => a.needsOverride).map(a => (
@@ -654,6 +658,35 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* JSON Preview toggle */}
+        {displayResults.length > 0 && (
+          <div style={{ borderTop: '1px solid var(--border)' }}>
+            <button type="button" className="btn btn-ghost w-full" onClick={() => setShowPreview(!showPreview)}
+              style={{ borderRadius: 0, fontSize: 11, minHeight: 32, justifyContent: 'center', gap: 4 }}>
+              {showPreview ? '\u25B2 Hide' : '\u25BC Preview'} JSON Output
+            </button>
+            {showPreview && (
+              <div style={{ padding: '8px 14px', maxHeight: 300, overflow: 'auto', background: 'var(--bg)', borderTop: '1px solid var(--border)' }}>
+                <pre className="text-mono text-xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text2)', lineHeight: 1.5 }}>
+                  {JSON.stringify({
+                    blacklisted: config.blacklisted,
+                    whitelisted: displayResults.map((r, idx) => {
+                      const entry: any = { pet_name: r.name, priority: idx, min_value: getMinValue(r) };
+                      const adv = getMutationAdvisory(r, gemMode).filter(a => a.needsOverride);
+                      if (adv.length > 0) {
+                        entry.mutations = {};
+                        for (const a of adv) entry.mutations[a.mutation] = a.recommendedOverride;
+                      }
+                      return entry;
+                    }),
+                    version: '1.0'
+                  }, null, 2)}
+                </pre>
+              </div>
+            )}
           </div>
         )}
       </div>

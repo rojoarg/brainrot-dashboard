@@ -598,8 +598,18 @@ function buildRecommendations(brainrots: Record<string, any>, wlMap: Record<stri
     const n = b.listingCount;
     if (n === 0) continue;
     const medPrice = b.medianPrice;
-    // Skip items with median price under $2 — too cheap to be worth trading
-    if (medPrice < 2) continue;
+    // Skip items with median price under $2 — UNLESS a mutation is valuable.
+    // A pet with base=$1 but Cursed=$30 must be included for config generation.
+    // Check max mutation combo median price before dropping.
+    if (medPrice < 2) {
+      let maxMutMed = 0;
+      for (const c of combos) {
+        if (c.mutation && c.mutation !== 'None' && isFinite(c.medianPrice) && c.medianPrice > maxMutMed) {
+          maxMutMed = c.medianPrice;
+        }
+      }
+      if (maxMutMed < 2) continue; // Both base AND all mutations under $2 — skip
+    }
     const sold = soldByName[name] || { count: 0, avgPrice: 0, totalValue: 0 };
     const spread = b.minPrice > 0 && isFinite(b.maxPrice) ? Math.min(1000, (b.maxPrice - b.minPrice) / b.minPrice) : 0;
     const roiAtMedian = b.minPrice > 0 && isFinite(medPrice) ? Math.min(100, (medPrice - b.minPrice) / b.minPrice) : 0;
