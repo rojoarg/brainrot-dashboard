@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { Config, DashData, Recommendation, WLItem } from '../../lib/types';
-import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority, getMaxMutationPrice, getMutationSummary, type GemMode } from '../../lib/utils';
+import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, getMaxMutationPrice, getMutationSummary, type GemMode } from '../../lib/utils';
 import { RarityBadge, TierBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -32,7 +32,7 @@ const STRATEGIES: Record<string, {
   label: string; desc: string; detail: string; icon: string; color: string; gradient: string;
   sort: (a: Recommendation, b: Recommendation) => number;
   gemMode?: GemMode;
-  defaults?: { priceField?: 'min' | 'med' | 'max'; minPrice?: string; maxPrice?: string };
+  defaults?: { priceField?: 'min' | 'med' | 'max'; minPrice?: string; maxPrice?: string; minSold?: string };
 }> = {
   allstar: {
     label: 'All-Star', desc: 'Best overall value', detail: 'Full competitive gem budgets. Sorted by profit score (price + flip + demand + rarity). Premium items always 1M gems.', icon: '\u2B50', color: '#ffc048', gradient: 'linear-gradient(135deg, #ffc04822, #ff880022)',
@@ -41,9 +41,9 @@ const STRATEGIES: Record<string, {
     defaults: { priceField: 'med', minPrice: '2' },
   },
   farmer: {
-    label: 'Farmer', desc: 'Volume + proven demand', detail: 'Uses p25 pricing with tight gem budgets (50M-300M). Prioritizes high farm score, sold count, and listing depth. Premium items still 1M.', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
+    label: 'Farmer', desc: 'Volume + proven demand', detail: 'Uses p25 pricing with tight gem budgets (50M-300M). Prioritizes farm score, sold count, listing depth. Min 1 sold by default.', icon: '\uD83C\uDF3E', color: '#00d68f', gradient: 'linear-gradient(135deg, #00d68f22, #00b37a22)',
     gemMode: 'farmer',
-    defaults: { priceField: 'med', minPrice: '2' },
+    defaults: { priceField: 'med', minPrice: '2', minSold: '1' },
     sort: (a, b) => {
       const aS = (a.farmScore || 0) * 3 + (a.soldCount || 0) * 2 + Math.min(a.listings ?? 0, 30) * 0.3 + ((a.med ?? 0) < 20 ? 5 : (a.med ?? 0) < 50 ? 3 : 0);
       const bS = (b.farmScore || 0) * 3 + (b.soldCount || 0) * 2 + Math.min(b.listings ?? 0, 30) * 0.3 + ((b.med ?? 0) < 20 ? 5 : (b.med ?? 0) < 50 ? 3 : 0);
@@ -91,6 +91,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [quickFilters, setQuickFilters] = useState<Set<QuickFilter>>(new Set());
   const [tableSearch, setTableSearch] = useState('');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const [addPetInput, setAddPetInput] = useState('');
+  const [manualPets, setManualPets] = useState<string[]>([]);
 
   const strat = STRATEGIES[activeStrategy];
   const gemMode: GemMode = strat?.gemMode || 'default';
@@ -180,9 +182,12 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
 
   /* ─── Generate + download ─── */
   const generateAndDownload = () => {
-    const wl: WLItem[] = displayResults.map((r: Recommendation) => {
+    // Priority = sequential index based on sorted order (0 = most important).
+    // The list is already sorted: premium items first (by price desc), then strategy sort.
+    // Using sequential ensures unique, unambiguous priorities for the bot.
+    const wl: WLItem[] = displayResults.map((r: Recommendation, idx: number) => {
       if (!r?.name) return null as any;
-      const item: WLItem = { pet_name: r.name, priority: computePriority(r), min_value: getMinValue(r) };
+      const item: WLItem = { pet_name: r.name, priority: idx, min_value: getMinValue(r) };
       const advisory = getMutationAdvisory(r, gemMode);
       const withOverrides = advisory.filter(a => a?.needsOverride);
       if (withOverrides.length > 0) {
@@ -193,6 +198,13 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       }
       return item;
     }).filter((w: WLItem | null) => w !== null);
+    // Append manually added pets (not in recommendations) at the end
+    const existingNames = new Set(wl.map(w => w.pet_name.toLowerCase()));
+    for (const name of manualPets) {
+      if (!existingNames.has(name.toLowerCase())) {
+        wl.push({ pet_name: name, priority: wl.length, min_value: 1000000 });
+      }
+    }
     const genConfig: Config = { whitelisted: wl, blacklisted: config.blacklisted, version: '1.0' };
     setConfig(genConfig);
     downloadConfigJSON(genConfig, showToast, data.recommendations, gemMode);
@@ -264,6 +276,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       if (s.defaults.minPrice != null) setFilterMinPrice(s.defaults.minPrice);
       if (s.defaults.maxPrice != null) setFilterMaxPrice(s.defaults.maxPrice);
       else setFilterMaxPrice('99999');
+      if (s.defaults.minSold != null) setMinSold(s.defaults.minSold);
+      else setMinSold('0');
     }
   };
 
@@ -485,7 +499,45 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
             {(quickFilters.size > 0 || tableSearch) && (
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setQuickFilters(new Set()); setTableSearch(''); }} style={{ fontSize: '0.6rem', padding: '2px 6px' }}>Clear</button>
             )}
+            {/* Manual pet entry */}
+            <div className="d-flex gap-1 items-center ml-auto" style={{ flex: '0 0 auto' }}>
+              <input className="input" placeholder="Add pet manually..." value={addPetInput} onChange={e => setAddPetInput(e.target.value)}
+                style={{ fontSize: 11, minHeight: 28, width: 150, padding: '2px 8px' }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && addPetInput.trim()) {
+                    const name = addPetInput.trim();
+                    if (!manualPets.some(p => p.toLowerCase() === name.toLowerCase())) {
+                      setManualPets(prev => [...prev, name]);
+                      showToast(`Added "${name}" to config`);
+                    }
+                    setAddPetInput('');
+                  }
+                }} />
+              <button type="button" className="btn btn-sm" onClick={() => {
+                if (addPetInput.trim()) {
+                  const name = addPetInput.trim();
+                  if (!manualPets.some(p => p.toLowerCase() === name.toLowerCase())) {
+                    setManualPets(prev => [...prev, name]);
+                    showToast(`Added "${name}" to config`);
+                  }
+                  setAddPetInput('');
+                }
+              }} style={{ fontSize: '0.6rem', padding: '2px 6px', minHeight: 28 }}>+ Add</button>
+            </div>
           </div>
+          {/* Show manually added pets */}
+          {manualPets.length > 0 && (
+            <div className="d-flex flex-wrap gap-1 mt-1">
+              <span className="text-xs text-muted">Manual:</span>
+              {manualPets.map(name => (
+                <div key={name} className="chip" style={{ fontSize: 10, padding: '1px 6px' }}>
+                  <span>{name}</span>
+                  <button type="button" onClick={() => setManualPets(prev => prev.filter(p => p !== name))}
+                    style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 9, padding: 0, marginLeft: 2 }}>{'\u2715'}</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {displayResults.length === 0 ? (
@@ -522,7 +574,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                     const effectivePrice = Math.max(r.med ?? 0, getMaxMutationPrice(r));
                     const isPremium = effectivePrice >= PREMIUM_THRESHOLD;
                     const minVal = getMinValue(r);
-                    const pri = computePriority(r);
+                    const pri = i; // Sequential priority = sorted position
                     const mutSummary = getMutationSummary(r);
                     const advisory = getMutationAdvisory(r, gemMode);
                     const mutCount = advisory.filter(a => a.needsOverride).length;
