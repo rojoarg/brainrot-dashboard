@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import type { Config, DashData, MutationAdvisory, Recommendation, BrainrotCombo, WLItem } from '../../lib/types';
+import type { Config, DashData, MutationAdvisory, Recommendation, WLItem } from '../../lib/types';
 import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, masterSort, computePriority } from '../../lib/utils';
-import { StatCard, TierBadge, RarityBadge, ImageThumb } from '../ui';
+import { RarityBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
   data: DashData;
@@ -170,6 +170,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [showFilters, setShowFilters] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [blInput, setBlInput] = useState('');
+  const [removedItems, setRemovedItems] = useState<Set<string>>(new Set());
+  const [minValueOverrides, setMinValueOverrides] = useState<Record<string, number>>({});
 
   const allRarities = useMemo(() => {
     if (!data?.recommendations) return [];
@@ -262,14 +264,17 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return combined.slice(0, maxN);
   }, [filtered, activeStrategy, maxItems]);
 
+  // Filter out removed items from display
+  const displayResults = useMemo(() => results.filter(r => !removedItems.has(r.name)), [results, removedItems]);
+
   /* Build config from results and immediately download */
   const generateAndDownload = () => {
-    const wl: WLItem[] = results.map((r: Recommendation) => {
+    const wl: WLItem[] = displayResults.map((r: Recommendation) => {
       if (!r?.name) return null as any;
       const item: WLItem = {
         pet_name: r.name,
         priority: computePriority(r),
-        min_value: smartMinValue(r),
+        min_value: minValueOverrides[r.name] ?? smartMinValue(r),
       };
       // Compute mutation overrides for this pet
       const advisory = getMutationAdvisory(r);
@@ -378,14 +383,14 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
 
   const strat = STRATEGIES[activeStrategy];
 
-  // Pre-compute advisories for all results (avoids recalculating per-row in render)
+  // Pre-compute advisories for display results
   const advisoryMap = useMemo(() => {
     const map = new Map<string, MutationAdvisory[]>();
-    for (const r of results) {
+    for (const r of displayResults) {
       map.set(r.name, getMutationAdvisory(r));
     }
     return map;
-  }, [results]);
+  }, [displayResults]);
 
   const totalOverrides = useMemo(() => {
     let count = 0;
@@ -397,14 +402,14 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
 
   // Validation summary — explains what the config generator did and why
   const configSummary = useMemo(() => {
-    if (results.length === 0) return null;
+    if (displayResults.length === 0) return null;
     const rarityGroups: Record<string, number> = {};
     let noSoldData = 0;
     let noListings = 0;
     let premiumAutoIncluded = 0;
     const premiumRarities = new Set(['OG', 'Admin', 'Brainrot God']);
 
-    for (const r of results) {
+    for (const r of displayResults) {
       const rar = r.rarity || 'Unknown';
       rarityGroups[rar] = (rarityGroups[rar] || 0) + 1;
       if ((r.soldCount ?? 0) === 0) noSoldData++;
@@ -424,36 +429,37 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     else hints.push('Sorted by rarity first, then strategy score within each tier');
 
     return { sortedRarities, hints };
-  }, [results, strat]);
+  }, [displayResults, strat]);
 
-  // Data quality check — warn if dataset looks incomplete
-  const dataQuality = useMemo(() => {
+  // Data freshness check — show when last scrape ran, not misleading coverage %
+  const dataFreshness = useMemo(() => {
     if (!data?.meta) return null;
     const total = data.meta.totalListings || 0;
     const unique = data.meta.uniqueBrainrots || 0;
     const combos = data.meta.uniqueCombos || 0;
-    // Use real marketplace total from latest completed scrape run, fallback to 65k estimate
     const runs = data.meta.scrapeRuns || [];
-    const lastCompleted = runs.find((r: any) => r.status === 'completed' && r.marketplaceTotal > 0);
-    const marketSize = lastCompleted?.marketplaceTotal || 65000;
-    const coverage = total > 0 && marketSize > 0 ? Math.round((total / marketSize) * 100) : 0;
-    const isLow = coverage < 80;
-    return { total, unique, combos, coverage, isLow, marketSize };
+    const lastCompleted = runs.find((r: any) => r.status === 'completed');
+    const lastScrapeAt = lastCompleted?.completed_at || lastCompleted?.started_at || null;
+    const hoursAgo = lastScrapeAt ? Math.floor((Date.now() - new Date(lastScrapeAt).getTime()) / 3600000) : null;
+    const isStale = hoursAgo === null || hoursAgo > 24;
+    return { total, unique, combos, hoursAgo, isStale };
   }, [data]);
 
   return (
     <div className="d-flex flex-col gap-4">
 
-      {/* ──── Data quality warning ──── */}
-      {dataQuality?.isLow && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+      {/* ──── Data freshness indicator ──── */}
+      {dataFreshness && (
+        <div style={{ padding: '10px 14px', borderRadius: 8, background: dataFreshness.isStale ? 'rgba(245, 158, 11, 0.1)' : 'rgba(0, 214, 143, 0.08)', border: `1px solid ${dataFreshness.isStale ? 'rgba(245, 158, 11, 0.3)' : 'rgba(0, 214, 143, 0.2)'}` }}>
           <div className="d-flex items-center gap-2">
-            <span className="text-lg">{'\u26A0\uFE0F'}</span>
+            <span className="text-lg">{dataFreshness.isStale ? '\u26A0\uFE0F' : '\u2705'}</span>
             <div>
-              <div className="text-sm fw-600" style={{ color: '#f59e0b' }}>Limited Data Coverage ({dataQuality.coverage}%)</div>
+              <div className="text-sm fw-600" style={{ color: dataFreshness.isStale ? '#f59e0b' : '#00d68f' }}>
+                {dataFreshness.isStale ? 'Data may be stale' : 'Data is fresh'}
+              </div>
               <div className="text-xs text-muted">
-                {dataQuality.total.toLocaleString()} of ~{(dataQuality.marketSize / 1000).toFixed(0)}k listings scraped ({dataQuality.unique} unique pets, {dataQuality.combos} combos).
-                Min prices and recommendations may be inaccurate. Run a fresh scrape for complete data.
+                {dataFreshness.total.toLocaleString()} active listings · {dataFreshness.unique} pets · {dataFreshness.combos} combos
+                {dataFreshness.hoursAgo !== null ? ` · Updated ${dataFreshness.hoursAgo}h ago` : ''}
               </div>
             </div>
           </div>
@@ -467,7 +473,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           {Object.entries(STRATEGIES).map(([id, s]) => {
             const isActive = activeStrategy === id;
             return (
-              <div key={id} onClick={() => setActiveStrategy(id)} role="button" tabIndex={0} aria-pressed={isActive} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setActiveStrategy(id))}
+              <div key={id} onClick={() => { setActiveStrategy(id); setRemovedItems(new Set()); setMinValueOverrides({}); }} role="button" tabIndex={0} aria-pressed={isActive} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setActiveStrategy(id), setRemovedItems(new Set()), setMinValueOverrides({}))}
                 className={`strategy-card ${isActive ? 'active' : ''}`}
                 style={{
                   background: isActive ? s.gradient : undefined,
@@ -591,7 +597,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           <div className="d-flex items-center gap-2 flex-wrap">
             <span className="text-xl">{strat?.icon}</span>
             <span className="fw-700 text-lg" style={{ color: strat?.color || 'var(--text)' }}>{strat?.label}</span>
-            <span className="text-md text-sub">{results.length} items</span>
+            <span className="text-md text-sub">{displayResults.length} items</span>
             {totalOverrides > 0 && (
               <span className="pill tag-warn">
                 {totalOverrides} override{totalOverrides > 1 ? 's' : ''}
@@ -605,45 +611,59 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
             <button type="button" className="btn btn-sm" onClick={saveConfig} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save to DB'}</button>
           </div>
         </div>
-        {results.length === 0 ? (
+        {displayResults.length === 0 ? (
           <div className="empty-state">
             No items match your filters. Try widening the price range or lowering min listings.
           </div>
         ) : (
           <div className="preview-body">
+            {removedItems.size > 0 && (
+              <div className="d-flex justify-between items-center" style={{ padding: '6px 12px', background: 'rgba(245, 158, 11, 0.08)', borderRadius: 6, marginBottom: 8 }}>
+                <span className="text-xs text-muted">{removedItems.size} item{removedItems.size > 1 ? 's' : ''} removed</span>
+                <button type="button" className="btn btn-sm" onClick={() => setRemovedItems(new Set())} style={{ fontSize: '0.7rem' }}>Undo All</button>
+              </div>
+            )}
             <div className="table-wrap">
               <table className="dash-table" role="table">
                 <thead><tr role="row">
                   <th className="w-30" role="columnheader">#</th>
                   <th className="w-28"></th>
-                  <th>Tier</th><th>Name</th><th>Rarity</th>
-                  <th>Min</th><th>Median</th><th>Listings</th><th>Min Value</th><th>Overrides</th>
+                  <th>Name</th><th>Rarity</th>
+                  <th>Min</th><th>Median</th><th>Sold</th><th>Min Value</th><th></th>
                 </tr></thead>
                 <tbody role="rowgroup">
-                  {results.map((r: Recommendation, i: number) => {
+                  {displayResults.map((r: Recommendation, i: number) => {
                     if (!r?.name) return null;
-                    const overrides = (advisoryMap.get(r.name) || []).filter((a: MutationAdvisory) => a.needsOverride);
+                    const currentMinVal = minValueOverrides[r.name] ?? smartMinValue(r);
                     return (
                       <tr key={`config-${r.name}`} role="row">
                         <td className="text-muted text-mono">{i + 1}</td>
                         <td><ImageThumb src={r.imageUrl || ''} size={22} /></td>
-                        <td><TierBadge tier={r.tier || ''} /></td>
-                        <td className="fw-600">{r.name || '—'}</td>
+                        <td className="fw-600">{r.name || '\u2014'}</td>
                         <td><RarityBadge rarity={r.rarity || ''} /></td>
                         <td className="text-green text-mono">{fmtPrice(r.min ?? 0)}</td>
                         <td className="text-mono">{fmtPrice(r.med ?? 0)}</td>
-                        <td>{r.listings ?? 0}</td>
-                        <td className="text-accent text-mono fw-600">{fmtMinValue(smartMinValue(r))}</td>
+                        <td className="text-muted">{r.soldCount ?? 0}</td>
                         <td>
-                          {overrides.length > 0 ? (
-                            <div className="d-flex flex-wrap gap-1">
-                              {overrides.map((a: MutationAdvisory) => (
-                                <span key={a.mutation} className="mut-override-chip">
-                                  {a.mutation} {'\u2192'} {fmtMinValue(a.recommendedOverride ?? 1000000)}
-                                </span>
-                              ))}
-                            </div>
-                          ) : <span className="text-muted text-xs">{'\u2014'}</span>}
+                          <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.75rem', padding: '2px 4px', minWidth: 80 }}
+                            value={currentMinVal}
+                            onChange={e => {
+                              const val = parseInt(e.target.value);
+                              setMinValueOverrides(prev => ({ ...prev, [r.name]: val }));
+                            }}>
+                            <option value={1000000}>1M</option>
+                            <option value={50000000}>50M</option>
+                            <option value={100000000}>100M</option>
+                            <option value={300000000}>300M</option>
+                            <option value={500000000}>500M</option>
+                            <option value={1000000000}>1B</option>
+                            <option value={1500000000}>1.5B</option>
+                            <option value={2000000000}>2B</option>
+                          </select>
+                        </td>
+                        <td>
+                          <button type="button" className="btn btn-sm" onClick={() => setRemovedItems(prev => new Set([...prev, r.name]))}
+                            style={{ fontSize: '0.65rem', padding: '2px 6px', color: '#ff4757' }} title="Remove from config">{'\u2715'}</button>
                         </td>
                       </tr>
                     );
@@ -656,7 +676,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       </div>
 
       {/* ──── Config Summary — why these items were picked ──── */}
-      {configSummary && results.length > 0 && (
+      {configSummary && displayResults.length > 0 && (
         <div className="config-summary" style={{ padding: '12px 16px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
           <div className="text-sm fw-600 text-sub mb-2">Config Breakdown</div>
           <div className="d-flex flex-wrap gap-2 mb-2">

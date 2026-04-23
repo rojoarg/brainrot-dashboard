@@ -110,21 +110,18 @@ export function smartMinValue(rec?: { min?: number; med?: number; p10?: number; 
 
   const price = med > 0 ? med : min;
 
-  // INVERTED price-to-gems tiers:
-  // Premium items (expensive in USD) → LOW gem threshold (always buy)
-  // Common items (cheap in USD) → HIGH gem threshold (standard gem budget)
+  // Simple human logic:
+  // Worth real money ($20+)? ALWAYS grab it. 1M gems = lowest possible.
+  // A $40 Dragon or $440 Skibidi Toilet is a goldmine at ANY gem price.
+  // Only cheap items need gem budgets for common in-game trades.
   //
-  // $100+  → 1M gems    (always buy — premium finds worth $100+ USD)
-  // $50+   → 50M gems   (near-premium, great find)
-  // $20+   → 300M gems  (solid mid-tier)
-  // $10+   → 1B gems    (good items, standard gem budget)
-  // $5+    → 1.5B gems  (common trades, bigger gem budget)
-  // $2+    → 2B gems    (cheap but tradeable, max gem budget)
-  // <$2    → 1M gems    (junk floor — shouldn't be in config)
+  // $20+  → 1M    (always buy — worth real money, no-brainer)
+  // $10+  → 1B    (good items — standard gem budget)
+  // $5+   → 1.5B  (mid-range trades)
+  // $2+   → 2B    (cheap common trades — max gem budget)
+  // <$2   → 1M    (junk floor — shouldn't be in config)
 
-  if (price >= 100) return 1000000;
-  if (price >= 50) return 50000000;
-  if (price >= 20) return 300000000;
+  if (price >= 20) return 1000000;
   if (price >= 10) return 1000000000;
   if (price >= 5) return 1500000000;
   if (price >= 2) return 2000000000;
