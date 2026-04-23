@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { Config, DashData, Recommendation, WLItem } from '../../lib/types';
-import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority } from '../../lib/utils';
+import { fmtPrice, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, computePriority } from '../../lib/utils';
 import { RarityBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -112,8 +112,9 @@ const PREMIUM_THRESHOLD = 50;
 
 function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [activeStrategy, setActiveStrategy] = useState<string>('allstar');
-  const [minPrice, setMinPrice] = useState('2');
-  const [maxPrice, setMaxPrice] = useState('99999');
+  const [filterMinPrice, setFilterMinPrice] = useState('2');
+  const [filterMaxPrice, setFilterMaxPrice] = useState('99999');
+  const [filterPriceField, setFilterPriceField] = useState<'min' | 'med' | 'max'>('min');
   const [minListings, setMinListings] = useState('1');
   const [maxItems, setMaxItems] = useState('50');
   const [rarity, setRarity] = useState('all');
@@ -136,22 +137,24 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   /* ─── Filter recommendations ─── */
   const filtered = useMemo(() => {
     if (!data?.recommendations) return [];
-    const lo = parseFloat(minPrice) || 0;
-    const userHi = parseFloat(maxPrice) || 999999;
+    const lo = parseFloat(filterMinPrice) || 0;
+    const userHi = parseFloat(filterMaxPrice) || 999999;
     const hi = strat?.autoMaxPrice ? Math.min(userHi, strat.autoMaxPrice) : userHi;
     const ml = parseInt(minListings) || 1;
     const bl = new Set(config.blacklisted.map((n: string) => n.toLowerCase()));
+    const pf = filterPriceField;
     return data.recommendations.filter((r: Recommendation) => {
-      if (!r || !r.name || bl.has(r.name.toLowerCase()) || r.name === 'Other') return false;
+      if (!r || !r.name || bl.has(r.name.toLowerCase()) || r.name.toLowerCase() === 'other') return false;
       if (rarity !== 'all' && r.rarity !== rarity) return false;
       if (excludedRarities.has(r.rarity)) return false;
+      const price = pf === 'min' ? (r.min ?? 0) : pf === 'max' ? (r.max ?? 0) : (r.med ?? 0);
       // Premium items ($50+) always pass price filters UNLESS strategy disables premium pinning
       if (!strat?.noPremiumPin && (r.med ?? 0) >= PREMIUM_THRESHOLD) {
         return (r.listings ?? 0) >= ml;
       }
-      return (r.med ?? 0) >= lo && (r.med ?? 0) <= hi && (r.listings ?? 0) >= ml;
+      return price >= lo && price <= hi && (r.listings ?? 0) >= ml;
     });
-  }, [data, minPrice, maxPrice, minListings, rarity, excludedRarities, config.blacklisted, strat]);
+  }, [data, filterMinPrice, filterMaxPrice, filterPriceField, minListings, rarity, excludedRarities, config.blacklisted, strat]);
 
   /* ─── Sort + cap results ─── */
   const results = useMemo(() => {
@@ -382,16 +385,28 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           <div className="filter-panel-body flex-col gap-3">
             <div className="grid-filters">
               <div>
-                <label className="config-label">Min Median ($)</label>
-                <input className="input" type="number" value={minPrice} onChange={e => setMinPrice(Math.max(0, parseFloat(e.target.value) || 0).toString())} min="0" />
+                <label className="config-label">Filter By</label>
+                <select className="select w-full" value={filterPriceField} onChange={e => setFilterPriceField(e.target.value as 'min' | 'med' | 'max')}>
+                  <option value="min">Min Price</option>
+                  <option value="med">Median Price</option>
+                  <option value="max">Max Price</option>
+                </select>
               </div>
               <div>
-                <label className="config-label">Max Median ($)</label>
-                <input className="input" type="number" value={maxPrice} onChange={e => setMaxPrice(Math.max(0, parseFloat(e.target.value) || 99999).toString())} min="0" />
+                <label className="config-label">Min $ ({filterPriceField === 'min' ? 'Min' : filterPriceField === 'med' ? 'Med' : 'Max'})</label>
+                <input className="input" type="number" value={filterMinPrice} onChange={e => setFilterMinPrice(Math.max(0, parseFloat(e.target.value) || 0).toString())} min="0" />
+              </div>
+              <div>
+                <label className="config-label">Max $ ({filterPriceField === 'min' ? 'Min' : filterPriceField === 'med' ? 'Med' : 'Max'})</label>
+                <input className="input" type="number" value={filterMaxPrice} onChange={e => setFilterMaxPrice(Math.max(0, parseFloat(e.target.value) || 99999).toString())} min="0" />
               </div>
               <div>
                 <label className="config-label">Min Listings</label>
                 <input className="input" type="number" value={minListings} onChange={e => setMinListings(Math.max(1, parseInt(e.target.value) || 1).toString())} min="1" />
+              </div>
+              <div>
+                <label className="config-label">Max Items</label>
+                <input className="input" type="number" value={maxItems} onChange={e => setMaxItems(Math.max(1, parseInt(e.target.value) || 50).toString())} min="1" />
               </div>
               <div>
                 <label className="config-label">Rarity</label>
@@ -399,10 +414,6 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                   <option value="all">All Rarities</option>
                   {allRarities.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
-              </div>
-              <div>
-                <label className="config-label">Max Items</label>
-                <input className="input" type="number" value={maxItems} onChange={e => setMaxItems(Math.max(1, parseInt(e.target.value) || 50).toString())} min="1" />
               </div>
             </div>
 
@@ -487,7 +498,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                   <th className="w-30" role="columnheader">#</th>
                   <th className="w-28"></th>
                   <th>Name</th><th>Rarity</th>
-                  <th>Min</th><th>Median</th><th>Sold</th><th>Min Value</th><th></th>
+                  <th>Min $</th><th>Med $</th><th>Max $</th><th>Sold</th><th>Gems</th><th></th>
                 </tr></thead>
                 <tbody role="rowgroup">
                   {displayResults.map((r: Recommendation, i: number) => {
@@ -500,6 +511,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                         <td><RarityBadge rarity={r.rarity || ''} /></td>
                         <td className="text-green text-mono">{fmtPrice(r.min ?? 0)}</td>
                         <td className="text-mono">{fmtPrice(r.med ?? 0)}</td>
+                        <td className="text-red text-mono">{fmtPrice(r.max ?? 0)}</td>
                         <td className="text-muted">{r.soldCount ?? 0}</td>
                         <td>
                           <select className="select text-mono text-accent fw-600" style={{ fontSize: '0.75rem', padding: '2px 4px', minWidth: 80 }}
