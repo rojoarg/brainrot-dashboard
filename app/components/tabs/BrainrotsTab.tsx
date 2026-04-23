@@ -59,7 +59,7 @@ function BrainrotsTab({
     [data],
   );
 
-  const SortTh = ({ col, children }: { col: string; children: React.ReactNode }) => (
+  const sortTh = (col: string, children: React.ReactNode) => (
     <th onClick={() => handleSort(col)} className="cursor-pointer" aria-sort={sortCol === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'} role="columnheader">
       {children} <span className={`sort-arrow${sortCol === col ? ' active' : ''}`} aria-hidden="true">{sortCol === col ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}</span>
     </th>
@@ -80,15 +80,15 @@ function BrainrotsTab({
           <thead>
             <tr role="row">
               <th className="w-30"></th>
-              <SortTh col="name">Name</SortTh>
+              {sortTh('name', 'Name')}
               <th>Rarity</th>
-              <SortTh col="medianPrice">Median</SortTh>
-              <SortTh col="minPrice">Min</SortTh>
-              <SortTh col="maxPrice">Max</SortTh>
-              <SortTh col="listingCount">Listings</SortTh>
-              <SortTh col="totalQty">Qty</SortTh>
-              <SortTh col="sellerCount">Sellers</SortTh>
-              <SortTh col="mutationCount">Mutations</SortTh>
+              {sortTh('medianPrice', 'Median')}
+              {sortTh('minPrice', 'Min')}
+              {sortTh('maxPrice', 'Max')}
+              {sortTh('listingCount', 'Listings')}
+              {sortTh('totalQty', 'Qty')}
+              {sortTh('sellerCount', 'Sellers')}
+              {sortTh('mutationCount', 'Mutations')}
               <th>WL</th>
             </tr>
           </thead>

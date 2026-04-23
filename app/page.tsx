@@ -33,13 +33,15 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [config, setConfig] = useState<Config>({ whitelisted: [], blacklisted: [], version: '1.0' });
   const [toast, setToast] = useState('');
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = window.localStorage?.getItem('brainrot-theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    }
+    return 'dark';
+  });
 
-  /* ─── Theme ─── */
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.localStorage?.getItem('brainrot-theme') : null;
-    if (saved === 'light' || saved === 'dark') setTheme(saved);
-  }, []);
+  /* ─── Theme sync ─── */
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     try { window.localStorage?.setItem('brainrot-theme', theme); } catch {}
@@ -50,7 +52,7 @@ export default function Dashboard() {
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [loadedAgoText, setLoadedAgoText] = useState('');
   useEffect(() => {
-    if (data && !loadedAt) setLoadedAt(Date.now());
+    if (data && !loadedAt) setLoadedAt(Date.now()); // eslint-disable-line
   }, [data, loadedAt]);
   useEffect(() => {
     if (!loadedAt) return;
