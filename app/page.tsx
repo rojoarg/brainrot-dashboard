@@ -283,33 +283,49 @@ export default function Dashboard() {
     else { setSortCol(col); setSortDir('desc'); }
   }, [sortCol]);
 
-  /* ─── Price change alerts ─── */
+  /* ─── Price change alerts ───
+     priceHistory has one row per (name, mutation, ms) per day. The old code
+     compared the two latest ROWS for a name — often different combos — and
+     used avg_price (polluted by decoy listings), producing nonsense like
+     "+441135%". Now: collapse each name to one robust price per DAY
+     (listing-count-weighted median_price), then compare the two most recent
+     distinct days. Percent change is clamped so a stray value can't dominate. */
   const alerts = useMemo(() => {
     if (!data?.priceHistory || data.priceHistory.length < 2) return [];
-    const items: { name: string; type: string; detail: string; color: string }[] = [];
-    const byName: Record<string, typeof data.priceHistory> = {};
-    data.priceHistory.forEach(p => {
-      if (!byName[p.name]) byName[p.name] = [];
-      byName[p.name].push(p);
-    });
-    for (const [name, snapshots] of Object.entries(byName)) {
-      if (snapshots.length < 2) continue;
-      const sorted = [...snapshots].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
-      const latest = sorted[sorted.length - 1];
-      const prev = sorted[sorted.length - 2];
-      if (prev.avg_price > 0 && latest.avg_price > 0 && isFinite(prev.avg_price) && isFinite(latest.avg_price)) {
-        const pctChange = ((latest.avg_price - prev.avg_price) / prev.avg_price) * 100;
-        if (isFinite(pctChange) && Math.abs(pctChange) >= 15) {
-          items.push({
-            name,
-            type: pctChange > 0 ? 'PRICE_UP' : 'PRICE_DROP',
-            detail: `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(0)}% avg price`,
-            color: pctChange > 0 ? 'var(--green)' : 'var(--red)',
-          });
-        }
+    const items: { name: string; type: string; detail: string; pct: number; color: string }[] = [];
+    // name -> date -> { weightedSum, weight }
+    const byName: Record<string, Record<string, { sum: number; w: number }>> = {};
+    for (const p of data.priceHistory) {
+      const price = p.median_price;
+      if (!(price > 0) || !isFinite(price)) continue;
+      const w = Math.max(1, p.listing_count || 1);
+      const days = (byName[p.name] ||= {});
+      const d = (days[p.snapshot_date] ||= { sum: 0, w: 0 });
+      d.sum += price * w;
+      d.w += w;
+    }
+    for (const [name, days] of Object.entries(byName)) {
+      const dates = Object.keys(days).sort();
+      if (dates.length < 2) continue;
+      const latest = days[dates[dates.length - 1]];
+      const prev = days[dates[dates.length - 2]];
+      const latestPrice = latest.sum / latest.w;
+      const prevPrice = prev.sum / prev.w;
+      if (!(prevPrice > 0) || !(latestPrice > 0)) continue;
+      let pct = ((latestPrice - prevPrice) / prevPrice) * 100;
+      if (!isFinite(pct)) continue;
+      pct = Math.max(-99, Math.min(999, pct)); // clamp display
+      if (Math.abs(pct) >= 15) {
+        items.push({
+          name,
+          type: pct > 0 ? 'PRICE_UP' : 'PRICE_DROP',
+          detail: `${pct > 0 ? '+' : ''}${pct.toFixed(0)}%`,
+          pct,
+          color: pct > 0 ? 'var(--green)' : 'var(--red)',
+        });
       }
     }
-    return items.sort((a, b) => Math.abs(parseFloat(b.detail)) - Math.abs(parseFloat(a.detail))).slice(0, 20);
+    return items.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 20);
   }, [data]);
 
   /* ─── Loading state — premium skeleton ─── */
@@ -484,7 +500,7 @@ export default function Dashboard() {
 
       {/* Footer: version + disclaimer */}
       <footer className="d-flex justify-between items-center flex-wrap gap-2 mt-4" style={{ padding: '14px 4px 8px', borderTop: '1px solid var(--border)', fontSize: '0.68rem', color: 'var(--text3)' }}>
-        <span>Brainrot Market Intelligence v1.2.1 · data refreshes automatically from Eldorado.gg</span>
+        <span>Brainrot Market Intelligence v1.2.2 · data refreshes automatically from Eldorado.gg</span>
         <span>Unofficial fan tool — not affiliated with Roblox, Steal a Brainrot, or Eldorado.gg. Prices are public marketplace data; use at your own risk.</span>
       </footer>
 

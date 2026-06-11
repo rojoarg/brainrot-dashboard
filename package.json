@@ -1,6 +1,6 @@
 {
   "name": "brainrot-dashboard",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "description": "Brainrot Market Intelligence — local Eldorado.gg market analytics and auto-joiner config generator for Steal a Brainrot",
   "author": "Rojo Colo",
@@ -62,6 +62,7 @@
     "electron-builder": "^26.15.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "playwright": "^1.60.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

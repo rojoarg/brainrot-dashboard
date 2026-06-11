@@ -143,17 +143,18 @@ export async function GET(request: Request) {
   (watchlist || []).forEach((w: any) => { wlMap[w.pet_name.toLowerCase()] = w; });
   const blSet: Set<string> = new Set((blacklist || []).map((b: any) => b.pet_name.toLowerCase()));
 
-  // ─── Trending derivation ───
-  // Eldorado's isTrending flag is dead (0 listings carry it as of June 2026).
-  // Derive trending from listing age instead: first_seen_at within 24h =
-  // fresh market activity. Cold-start guard: on a brand-new DB every listing
-  // is "new", which would mark the entire market trending — skip until the
-  // data has history.
+  // ─── Trending / recently-listed ───
+  // Eldorado's isTrending flag is dead (0 listings carry it as of June 2026),
+  // so "hot right now" is derived from first_seen_at, which is preserved
+  // across swaps — genuinely new offers float to the top after the first
+  // scrape. The old cold-start guard SUPPRESSED trending whenever most
+  // listings were fresh, which is always true right after a sync, leaving the
+  // tab permanently empty. Instead we never suppress: the feed is the newest
+  // listings (by first_seen, then price), so a fresh sync simply shows the
+  // most valuable new listings rather than nothing.
   const dayAgo = Date.now() - 24 * 3600 * 1000;
-  const isRecent = (l: any) => !!l.first_seen_at && new Date(l.first_seen_at).getTime() >= dayAgo;
-  const recentTotal = allListings.reduce((s, l) => s + (isRecent(l) ? 1 : 0), 0);
-  const coldStart = allListings.length === 0 || recentTotal / allListings.length > 0.5;
-  const isTrendingListing = (l: any) => !!l.is_trending || (!coldStart && isRecent(l));
+  const firstSeenMs = (l: any) => (l.first_seen_at ? new Date(l.first_seen_at).getTime() : 0);
+  const isTrendingListing = (l: any) => !!l.is_trending || firstSeenMs(l) >= dayAgo;
 
   // ─── Aggregate all data ───
   const brainrots: Record<string, any> = {};
@@ -161,13 +162,10 @@ export async function GET(request: Request) {
   const rarityStats: Record<string, any> = {};
   const mutationStats: Record<string, any> = {};
   const msStats: Record<string, any> = {};
-  let trendingCount = 0;
 
   for (const l of allListings) {
     const { name, rarity, mutation, ms, price, quantity, seller, verified } = l;
     if (!name || name === 'Other' || /^\d+$/.test(name) || name.length <= 2) continue;
-
-    if (isTrendingListing(l)) trendingCount++;
 
     // ─── Brainrot aggregation ───
     if (!brainrots[name]) {
@@ -309,6 +307,29 @@ export async function GET(request: Request) {
     b.p25 = n > 0 ? pct(0.25) : 0;
     b.p75 = n > 0 ? pct(0.75) : 0;
     b.p90 = n > 0 ? pct(0.9) : 0;
+
+    // ─── Robust min/max ───
+    // Eldorado is full of decoy/scam/mislabeled listings priced orders of
+    // magnitude off the real rate (e.g. a "$0.67 Headless Horseman" against a
+    // $6,999 median). Raw min/max made the displayed range — and the ROI/
+    // spread derived from min — nonsense. Trim to a generous 10x band around
+    // the median; fall back to raw ends only for thin samples.
+    if (n > 0 && b.medianPrice > 0) {
+      const lo = b.medianPrice / 10;
+      const hi = b.medianPrice * 10;
+      const inBand = b.prices.filter((p: number) => p >= lo && p <= hi);
+      if (inBand.length >= 3) {
+        b.minPrice = inBand[0];
+        b.maxPrice = inBand[inBand.length - 1];
+      } else {
+        b.minPrice = b.prices[0];
+        b.maxPrice = b.prices[n - 1];
+      }
+    } else if (n > 0) {
+      b.minPrice = b.prices[0];
+      b.maxPrice = b.prices[n - 1];
+    }
+
     b.sellerCount = b.sellerSet.size;
     b.mutationCount = b.mutationSet.size;
     b.mutations = Array.from(b.mutationSet);
@@ -487,10 +508,18 @@ export async function GET(request: Request) {
       dt: l.delivery_time || '',
     })) : [];
 
-  // ─── Trending items (derived — see isTrendingListing above) ───
+  // ─── Trending items: newest listings (by first_seen, then price) ───
+  // Always populated when there's data — never an empty tab. Decoy/scam
+  // listings (price wildly off the pet's robust median) are excluded so the
+  // feed doesn't surface a "$0.67 Headless Horseman".
+  const plausiblePrice = (l: any) => {
+    const med = brainrots[l.name]?.medianPrice;
+    if (!med || med <= 0) return true; // no baseline — keep
+    return l.price >= med / 10 && l.price <= med * 10;
+  };
   const trendingItems = allListings
-    .filter(l => isTrendingListing(l) && l.name && l.name !== 'Other' && isFinite(l.price))
-    .sort((a, b) => (b.price || 0) - (a.price || 0))
+    .filter(l => l.name && l.name !== 'Other' && isFinite(l.price) && plausiblePrice(l))
+    .sort((a, b) => (firstSeenMs(b) - firstSeenMs(a)) || ((b.price || 0) - (a.price || 0)))
     .slice(0, 100)
     .map(l => ({
       name: l.name, rarity: l.rarity, mutation: l.mutation, ms: l.ms,
@@ -556,7 +585,9 @@ export async function GET(request: Request) {
       uniqueCombos: Object.values(brainrots).reduce((s: number, b: any) => s + Object.keys(b.combos).length, 0),
       totalSellers: Object.keys(sellers).length,
       totalQty: allListings.reduce((s, l) => s + (l.quantity || 0), 0),
-      trendingCount,
+      // The "trending" stat reflects the recently-listed feed shown in the tab
+      // (capped), not the raw count — which right after a sync would be ~all.
+      trendingCount: trendingItems.length,
       totalSoldAllTime: totalSoldCount || 0,
       totalSoldLast30d: (soldArchive || []).length,
       lastScrape: lastRun?.completed_at || null,

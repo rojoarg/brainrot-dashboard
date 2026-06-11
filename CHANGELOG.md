@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.2 — 2026-06-11
+
+### Fixed
+- **Min/max prices were nonsense** (e.g. Headless Horseman showing a $0.67 min against a $6,999 median). Eldorado is full of decoy/scam/mislabeled listings priced orders of magnitude off the real rate; the aggregation took the raw min/max across all of them. Displayed min/max (and the ROI/spread derived from min) are now computed from a robust band (10× around the median), falling back to raw ends only for thin samples. Verified in-browser: Meowl $195–$3.5K, Headless $860–$10K.
+- **Trending tab was permanently empty.** A cold-start guard suppressed all trending whenever >50% of listings were recent — which is always true right after a sync. Trending is now the newest listings (by first-seen, then price), decoy-filtered, and never empty when data exists. Verified: "Trending (100)".
+- **Price-change alerts showed absurd values** (e.g. "+441135%"): they compared the two latest price-history rows for a pet — often different mutation combos — using decoy-polluted avg_price. Now each pet is collapsed to one listing-count-weighted **median** price per day, compared across the two most recent days, and clamped to ±999%.
+
+### Tooling
+- Added `scripts/tab-check.js` (Playwright) to drive every tab, capture console/error-boundary failures, and screenshot each — used to verify this release.
+
 ## v1.2.1 — 2026-06-11
 
 ### Performance
