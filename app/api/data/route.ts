@@ -48,6 +48,38 @@ function normalizeListing(l: any): any {
   };
 }
 
+// ─── Response cache ───
+// The full aggregation (~50k rows → ~1.4s) is identical between scrapes, yet
+// SWR polls every 5 min. Cache the serialized payload keyed by a cheap
+// version string; the underlying data only changes on a scrape swap, a config
+// save, or a scrape-blacklist edit — all detectable via MAX(id) (SQLite
+// AUTOINCREMENT is monotonic and survives delete+reinsert via sqlite_sequence).
+type DataCacheEntry = { version: string; body: string; etag: string };
+const dataCache = new Map<string, DataCacheEntry>(); // keyed by `include` variant
+
+function computeDataVersion(db: ReturnType<typeof getDb>, include: string): string {
+  const maxId = (table: string, where = '') =>
+    ((db.prepare(`SELECT MAX(id) AS m FROM ${table}${where}`).get() as any)?.m ?? 0) as number;
+  const completedRun = (db.prepare("SELECT MAX(id) AS m FROM brainrot_scrape_runs WHERE status = 'completed'").get() as any)?.m ?? 0;
+  return [
+    include,
+    `run:${completedRun}`,
+    `wl:${maxId('brainrot_watchlist')}`,
+    `bl:${maxId('brainrot_blacklist')}`,
+    `sbl:${maxId('brainrot_scrape_blacklist')}`,
+  ].join('|');
+}
+
+// FNV-1a — small, fast, dependency-free; good enough for an ETag validator.
+function weakEtag(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `W/"${(h >>> 0).toString(36)}-${s.length.toString(36)}"`;
+}
+
 export async function GET(request: Request) {
   try {
   // Rate limiting
@@ -55,6 +87,22 @@ export async function GET(request: Request) {
   const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
   if (!checkRateLimit(ip)) {
     return NextResponse.json({ error: 'Rate limit exceeded. Please wait before refreshing.' }, { status: 429 });
+  }
+
+  // ─── Cache fast-path ───
+  const includeRawParam = new URL(request.url).searchParams.get('include') === 'raw' ? 'raw' : 'default';
+  const cacheDb = getDb();
+  const version = computeDataVersion(cacheDb, includeRawParam);
+  const cached = dataCache.get(includeRawParam);
+  if (cached && cached.version === version) {
+    // Nothing changed since we built this payload.
+    if (request.headers.get('if-none-match') === cached.etag) {
+      return new Response(null, { status: 304, headers: { ETag: cached.etag } });
+    }
+    return new Response(cached.body, {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ETag: cached.etag, 'Cache-Control': 'no-cache', 'X-Cache': 'HIT' },
+    });
   }
 
   const thirtyDaysAgo = new Date();
@@ -501,7 +549,7 @@ export async function GET(request: Request) {
   const sanitizedMutationStats = sanitizeStats(mutationStats);
   const sanitizedMsStats = sanitizeStats(msStats);
 
-  return NextResponse.json({
+  const payload = {
     meta: {
       totalListings: allListings.length,
       uniqueBrainrots: Object.keys(brainrots).length,
@@ -559,9 +607,23 @@ export async function GET(request: Request) {
     },
     trending: trendingItems,
     config: configData,
-  }, {
+  };
+
+  // Serialize once, cache by version, and attach an ETag so unchanged polls
+  // can 304 with an empty body.
+  const body = JSON.stringify(payload);
+  const etag = weakEtag(version + ':' + body.length);
+  dataCache.set(includeRawParam, { version, body, etag });
+  if (request.headers.get('if-none-match') === etag) {
+    return new Response(null, { status: 304, headers: { ETag: etag } });
+  }
+  return new Response(body, {
+    status: 200,
     headers: {
-      'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+      'Content-Type': 'application/json',
+      ETag: etag,
+      'Cache-Control': 'no-cache',
+      'X-Cache': 'MISS',
       'X-Content-Type-Options': 'nosniff',
     },
   });

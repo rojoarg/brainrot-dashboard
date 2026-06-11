@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.1 — 2026-06-11
+
+### Performance
+- `/api/data` now caches its serialized payload keyed by a cheap version string (max scrape-run / watchlist / blacklist / scrape-blacklist ids) and emits an ETag. Repeat polls skip the ~1.4s full aggregation (verified `X-Cache: HIT`), and unchanged browser polls get a `304 Not Modified` with an empty body (`Cache-Control: no-cache` enables revalidation). Cache busts correctly on scrape swap, config save, and blacklist edits (verified). Removed the conflicting `s-maxage` header from next.config.js.
+
 ## v1.2.0 — 2026-06-11 (autonomous overhaul)
 
 ### Fixed

@@ -484,7 +484,7 @@ export default function Dashboard() {
 
       {/* Footer: version + disclaimer */}
       <footer className="d-flex justify-between items-center flex-wrap gap-2 mt-4" style={{ padding: '14px 4px 8px', borderTop: '1px solid var(--border)', fontSize: '0.68rem', color: 'var(--text3)' }}>
-        <span>Brainrot Market Intelligence v1.2 · data refreshes automatically from Eldorado.gg</span>
+        <span>Brainrot Market Intelligence v1.2.1 · data refreshes automatically from Eldorado.gg</span>
         <span>Unofficial fan tool — not affiliated with Roblox, Steal a Brainrot, or Eldorado.gg. Prices are public marketplace data; use at your own risk.</span>
       </footer>
 

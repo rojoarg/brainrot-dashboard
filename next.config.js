@@ -22,12 +22,8 @@ const nextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },
-      {
-        source: '/api/data',
-        headers: [
-          { key: 'Cache-Control', value: 's-maxage=30, stale-while-revalidate=60' },
-        ],
-      },
+      // /api/data sets its own Cache-Control + ETag in the route handler
+      // (no-cache → store-and-revalidate, enabling 304s). No override here.
     ];
   },
 };
