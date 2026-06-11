@@ -1,6 +1,6 @@
 {
   "name": "brainrot-dashboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Brainrot Market Intelligence — local Eldorado.gg market analytics and auto-joiner config generator for Steal a Brainrot",
   "author": "Rojo Colo",
@@ -36,7 +36,10 @@
       "target": "nsis"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "license": "assets/eula.txt",
       "deleteAppDataOnUninstall": false,
       "artifactName": "BrainrotIntel-Setup-${version}.${ext}"
     }

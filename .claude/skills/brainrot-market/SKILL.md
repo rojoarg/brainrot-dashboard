@@ -30,6 +30,19 @@ A brainrot's real-money value is determined by: how rare it is (spawn odds), how
 | Rare | $0.01-$0.50 | $2K-9.7K | $15-75/s | Trippi Troppi, Tung Tung Tung Sahur |
 | Common | $0.01-$0.10 | $25-1.7K | $1-14/s | Noobini Pizzanini, Lirili Larila |
 
+## In-Game Income/Value Reference (sammy's table, June 11 2026)
+
+| Name | Rarity | Income | In-Game Value |
+|------|--------|--------|---------------|
+| Meowl | OG | $7.2B/s | $650B |
+| 67 | Secret | $90M/s | $1.2B |
+| Skibidi Toilet | OG | $5.4B/s | $450B |
+| Cerberus | Secret | $2.1B/s | $150B |
+| Capitano Moby | Secret | $1.9B/s | $125B |
+
+Note: "67" is a real brainrot name. These in-game values are the scale the
+auto-joiner's min_value compares against (a 1M min_value = grab anything).
+
 ## Top 20 Most Valuable Brainrots (Eldorado USD)
 
 1. Headless Horseman — $2,000-$4,000+ (OG, ~121 exist)

@@ -11,7 +11,7 @@ interface TrendingTabProps {
 }
 
 function TrendingTab({ data, openDetail }: TrendingTabProps) {
-  const trending = data?.trending || [];
+  const trending = useMemo(() => data?.trending || [], [data]);
   const [search, setSearch] = useState('');
   const filtered = useMemo(() => {
     if (!search) return trending;

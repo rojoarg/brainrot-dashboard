@@ -250,7 +250,7 @@ export interface DashData {
   config: { whitelisted: WLItem[]; blacklisted: string[] };
 }
 
-export type TabId = 'overview' | 'brainrots' | 'detail' | 'recs' | 'watchlist' | 'sellers' | 'sold' | 'trending' | 'mutations' | 'user' | 'config' | 'raw';
+export type TabId = 'overview' | 'brainrots' | 'detail' | 'recs' | 'watchlist' | 'sellers' | 'sold' | 'trending' | 'mutations' | 'config';
 
 export interface MutationAdvisory {
   mutation: string;

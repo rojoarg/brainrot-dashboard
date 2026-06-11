@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useMemo, useCallback } from 'react';
-import type { DashData, Brainrot, Recommendation, WLItem, MutationAdvisory, BrainrotCombo, ComboSeller } from '../../lib/types';
+import type { DashData, Recommendation, BrainrotCombo, ComboSeller } from '../../lib/types';
 import { fmt, fmtPrice, fmtMinValue, getMutationAdvisory, smartMinValue } from '../../lib/utils';
-import { RARITY_COLORS, MUTATION_COLORS, MUTATION_MULTIPLIERS } from '../../lib/constants';
+import { MUTATION_COLORS, MUTATION_MULTIPLIERS } from '../../lib/constants';
 import { StatCard, TierBadge, RarityBadge, WLButton, ImageThumb, SearchInput, FilterBar } from '../ui';
 
 interface DetailTabProps {
@@ -30,8 +30,8 @@ export default React.memo(function DetailTab({ data, selected, setSelected, isOn
   // Prev/next navigation
   const recNames = useMemo(() => data.recommendations.map((r: Recommendation) => r.name), [data]);
   const currentIdx = selected ? recNames.indexOf(selected) : -1;
-  const goPrev = useCallback(() => { if (currentIdx > 0) setSelected(recNames[currentIdx - 1]); }, [currentIdx, recNames]);
-  const goNext = useCallback(() => { if (currentIdx < recNames.length - 1) setSelected(recNames[currentIdx + 1]); }, [currentIdx, recNames]);
+  const goPrev = useCallback(() => { if (currentIdx > 0) setSelected(recNames[currentIdx - 1]); }, [currentIdx, recNames, setSelected]);
+  const goNext = useCallback(() => { if (currentIdx < recNames.length - 1) setSelected(recNames[currentIdx + 1]); }, [currentIdx, recNames, setSelected]);
 
   if (!selected || !b) return (
     <div className="glass-card p-4 text-center animate-fade-in">
@@ -236,7 +236,7 @@ export default React.memo(function DetailTab({ data, selected, setSelected, isOn
                   ) : <span className="text-xs text-muted">—</span>}
                 </td>
                 <td className="text-sm">
-                  {c.sellers?.slice(0, 3).map((s: ComboSeller, j: number) => (
+                  {c.sellers?.slice(0, 3).map((s: ComboSeller) => (
                     <span key={`${s.name}-${s.price}`} className="mr-2">
                       {s.verified && <span className="text-green">✓</span>}
                       {s.name} ({fmtPrice(s.price)})

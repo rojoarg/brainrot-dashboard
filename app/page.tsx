@@ -6,7 +6,7 @@ import { TabErrorBoundary } from './components/ErrorBoundary';
 import { DashboardSkeleton } from './components/ui';
 import FirstSyncOverlay from './components/FirstSyncOverlay';
 import BlacklistModal from './components/BlacklistModal';
-import type { DashData, Config, TabId } from './lib/types';
+import type { Config, TabId } from './lib/types';
 import { TABS } from './lib/constants';
 import { timeAgo, downloadConfigJSON, exportData, smartMinValue, getMutationAdvisory, computePriority } from './lib/utils';
 import { useData } from './lib/useData';
@@ -21,15 +21,15 @@ const SellersTab = dynamic(() => import('./components/tabs/SellersTab'), { ssr: 
 const SoldTab = dynamic(() => import('./components/tabs/SoldTab'), { ssr: false });
 const TrendingTab = dynamic(() => import('./components/tabs/TrendingTab'), { ssr: false });
 const MutationsTab = dynamic(() => import('./components/tabs/MutationsTab'), { ssr: false });
-const UserDashTab = dynamic(() => import('./components/tabs/UserDashTab'), { ssr: false });
 const ConfigTab = dynamic(() => import('./components/tabs/ConfigTab'), { ssr: false });
-const RawTab = dynamic(() => import('./components/tabs/RawTab'), { ssr: false });
 
 /* ─── Main Dashboard ─── */
 export default function Dashboard() {
   const { data, error: loadError, isLoading, refresh } = useData();
 
   const [tab, setTab] = useState<TabId>('overview');
+  // Where the user was before drilling into Detail (not in the tab bar)
+  const [prevTab, setPrevTab] = useState<TabId>('overview');
   const [showBlacklist, setShowBlacklist] = useState(false);
   const [selectedBrainrot, setSelectedBrainrot] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -115,10 +115,13 @@ export default function Dashboard() {
       const tabIds = TABS.map(t => t.id);
       const idx = tabIds.indexOf(tab);
 
-      if (e.key === 'ArrowLeft' && idx > 0) {
+      if (e.key === 'Escape' && tab === 'detail') {
+        e.preventDefault();
+        setTab(prevTab);
+      } else if (e.key === 'ArrowLeft' && idx > 0) {
         e.preventDefault();
         setTab(tabIds[idx - 1]);
-      } else if (e.key === 'ArrowRight' && idx < tabIds.length - 1) {
+      } else if (e.key === 'ArrowRight' && idx >= 0 && idx < tabIds.length - 1) {
         e.preventDefault();
         setTab(tabIds[idx + 1]);
       } else if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
@@ -131,7 +134,7 @@ export default function Dashboard() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [tab, refresh]);
+  }, [tab, prevTab, refresh]);
 
   /* ─── Watchlist helpers ─── */
   const isOnWL = useCallback((name: string) => config.whitelisted.some(w => w.pet_name.toLowerCase() === name.toLowerCase()), [config]);
@@ -244,7 +247,13 @@ export default function Dashboard() {
   }, [scrapeRunning, watchScrape, showToast]);
 
   /* ─── Navigation helpers ─── */
-  const openDetail = useCallback((name: string) => { setSelectedBrainrot(name); setTab('detail'); }, []);
+  // Detail is a drill-in view — remember where the user came from
+  const openDetail = useCallback((name: string) => {
+    setSelectedBrainrot(name);
+    if (tab !== 'detail') setPrevTab(tab);
+    setTab('detail');
+  }, [tab, setPrevTab]);
+  const closeDetail = useCallback(() => setTab(prevTab), [prevTab]);
 
   const handleSort = useCallback((col: string) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -407,16 +416,21 @@ export default function Dashboard() {
         <TabErrorBoundary key={`eb-${tab}`}>
           {tab === 'overview' && <OverviewTab data={data} openDetail={openDetail} />}
           {tab === 'brainrots' && <BrainrotsTab data={data} search={search} setSearch={setSearch} sortCol={sortCol} sortDir={sortDir} handleSort={handleSort} openDetail={openDetail} isOnWL={isOnWL} addToWL={addToWL} removeFromWL={removeFromWL} />}
-          {tab === 'detail' && <DetailTab data={data} selected={selectedBrainrot} setSelected={setSelectedBrainrot} isOnWL={isOnWL} addToWL={addToWL} removeFromWL={removeFromWL} />}
+          {tab === 'detail' && (
+            <>
+              <button type="button" className="btn btn-sm mb-3" onClick={closeDetail} aria-label="Back to previous view">
+                ← Back to {TABS.find(t => t.id === prevTab)?.label || 'Overview'}
+              </button>
+              <DetailTab data={data} selected={selectedBrainrot} setSelected={setSelectedBrainrot} isOnWL={isOnWL} addToWL={addToWL} removeFromWL={removeFromWL} />
+            </>
+          )}
           {tab === 'recs' && <RecsTab data={data} search={search} setSearch={setSearch} openDetail={openDetail} isOnWL={isOnWL} addToWL={addToWL} removeFromWL={removeFromWL} />}
           {tab === 'watchlist' && <WatchlistTab data={data} config={config} openDetail={openDetail} removeFromWL={removeFromWL} />}
-          {tab === 'sellers' && <SellersTab data={data} openDetail={openDetail} />}
+          {tab === 'sellers' && <SellersTab data={data} />}
           {tab === 'sold' && <SoldTab data={data} openDetail={openDetail} />}
           {tab === 'trending' && <TrendingTab data={data} openDetail={openDetail} />}
           {tab === 'mutations' && <MutationsTab data={data} />}
-          {tab === 'user' && <UserDashTab data={data} config={config} setConfig={setConfig} showToast={showToast} openDetail={openDetail} isOnWL={isOnWL} addToWL={addToWL} removeFromWL={removeFromWL} />}
           {tab === 'config' && <ConfigTab data={data} config={config} setConfig={setConfig} showToast={showToast} />}
-          {tab === 'raw' && <RawTab data={data} />}
         </TabErrorBoundary>
       </div>
       )}
@@ -437,6 +451,12 @@ export default function Dashboard() {
           {'\u2699\uFE0F'} <span className="fab-count">{config.whitelisted.length}</span>
         </button>
       )}
+
+      {/* Footer: version + disclaimer */}
+      <footer className="d-flex justify-between items-center flex-wrap gap-2 mt-4" style={{ padding: '14px 4px 8px', borderTop: '1px solid var(--border)', fontSize: '0.68rem', color: 'var(--text3)' }}>
+        <span>Brainrot Market Intelligence v1.1 · data refreshes automatically from Eldorado.gg</span>
+        <span>Unofficial fan tool — not affiliated with Roblox, Steal a Brainrot, or Eldorado.gg. Prices are public marketplace data; use at your own risk.</span>
+      </footer>
 
       {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
     </div>

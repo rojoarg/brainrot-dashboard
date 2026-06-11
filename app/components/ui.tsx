@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Image from 'next/image';
 import { RARITY_COLORS, TIER_CLS } from '../lib/constants';
 
 /* ─── Stat Card — Animated value with gradient depth ─── */
@@ -53,7 +54,9 @@ function isValidImageUrl(url: string): boolean {
 }
 export const ImageThumb = React.memo(function ImageThumb({ src, size = 28, alt = '' }: { src?: string; size?: number; alt?: string }) {
   if (!src || !isValidImageUrl(src)) return <div className="img-placeholder" style={{ width: size, height: size }} role="img" aria-label={alt || 'No image'} />;
-  return <img src={src} width={size} height={size} className="img-thumb" alt={alt} loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />;
+  // unoptimized: the desktop app has no image-optimization server; Eldorado
+  // already serves pre-sized thumbnails.
+  return <Image src={src} width={size} height={size} className="img-thumb" alt={alt} loading="lazy" unoptimized onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />;
 });
 
 /* ─── Trust Badge ─── */

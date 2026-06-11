@@ -7,10 +7,9 @@ import { TrustBadge, SearchInput, FilterBar } from '../ui';
 
 interface SellersTabProps {
   data: DashData;
-  openDetail: (name: string) => void;
 }
 
-export default React.memo(function SellersTab({ data, openDetail }: SellersTabProps) {
+export default React.memo(function SellersTab({ data }: SellersTabProps) {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('listings');
   const sellers = useMemo(() => {

@@ -8,7 +8,7 @@ import {
 import type { DashData, Recommendation, PriceHistoryPoint, SoldItem } from '../../lib/types';
 import { RARITY_COLORS } from '../../lib/constants';
 import { fmt, fmtPrice, timeAgo } from '../../lib/utils';
-import { StatCard, TierBadge, RarityBadge, ImageThumb, Sparkline } from '../ui';
+import { StatCard, TierBadge, RarityBadge, ImageThumb } from '../ui';
 
 /* Shared Recharts constants — single source of truth */
 const TOOLTIP_STYLE = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-lg)' } as const;
@@ -20,7 +20,7 @@ interface OverviewTabProps {
 }
 
 function OverviewTab({ data, openDetail }: OverviewTabProps) {
-  const { meta, rarityDist, priceBuckets, recommendations, soldArchive, trending, mutationDist, priceHistory } = data;
+  const { meta, rarityDist, priceBuckets, recommendations, soldArchive, mutationDist, priceHistory } = data;
 
   const topS = recommendations.filter((r: Recommendation) => r.tier === 'S').slice(0, 8);
   const topA = recommendations.filter((r: Recommendation) => r.tier === 'A').slice(0, 8);

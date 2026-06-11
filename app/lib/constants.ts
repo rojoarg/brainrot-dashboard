@@ -1,18 +1,19 @@
 import type { TabId } from './types';
 
+// Visible navigation. 'detail' is intentionally NOT here — it's a drill-in
+// view opened by clicking a brainrot anywhere, with its own back button.
+// Removed in the v4 redesign: '👤 Dashboard' (duplicated Overview/Watchlist)
+// and 'Raw Data' (Export All covers it; Detail shows per-pet listings).
 export const TABS: { id: TabId; label: string; accent?: boolean }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'brainrots', label: 'All Brainrots' },
-  { id: 'detail', label: 'Detail' },
+  { id: 'brainrots', label: 'Market' },
   { id: 'recs', label: 'What to Steal', accent: true },
-  { id: 'watchlist', label: 'Watchlist' },
-  { id: 'sellers', label: 'Sellers' },
-  { id: 'sold', label: 'Sold / Delisted' },
   { id: 'trending', label: 'Trending' },
-  { id: 'mutations', label: 'Mutations & M/s' },
-  { id: 'user', label: '👤 Dashboard' },
+  { id: 'mutations', label: 'Mutations' },
+  { id: 'sellers', label: 'Sellers' },
+  { id: 'sold', label: 'Sold' },
+  { id: 'watchlist', label: 'Watchlist' },
   { id: 'config', label: 'Config', accent: true },
-  { id: 'raw', label: 'Raw Data' },
 ];
 
 export const RARITY_COLORS: Record<string, string> = {
