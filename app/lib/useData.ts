@@ -3,16 +3,25 @@
 import useSWR from 'swr';
 import type { DashData } from './types';
 
-const fetcher = (url: string) => fetch(url).then(r => {
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-}).then((d: DashData) => {
-  if ((d as any).error) throw new Error((d as any).error);
-  return d;
-}).catch(err => {
-  console.error('Data fetch error:', err);
-  throw new Error('Failed to load market data. Please refresh.');
-});
+const fetcher = async (url: string): Promise<DashData> => {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    console.error('Data fetch error:', err);
+    throw new Error('Network error loading market data. Check your connection and refresh.');
+  }
+  // Read the body even on errors — the API returns clear messages
+  // (e.g. 503 "Supabase is not configured...") that we want to show.
+  let body: any = null;
+  try { body = await res.json(); } catch { /* non-JSON error body */ }
+  if (!res.ok || body?.error) {
+    const msg = body?.error || `HTTP ${res.status} loading market data. Please refresh.`;
+    console.error('Data fetch error:', msg);
+    throw new Error(msg);
+  }
+  return body as DashData;
+};
 
 export function useData() {
   const { data, error, isLoading, mutate } = useSWR<DashData>('/api/data', fetcher, {

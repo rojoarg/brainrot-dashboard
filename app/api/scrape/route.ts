@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseConfigured, SUPABASE_MISSING_MSG } from '@/lib/supabase';
 
 export const maxDuration = 60;
 
@@ -159,6 +159,9 @@ async function triggerNext(baseUrl: string, secret: string, nextSegment: string)
 }
 
 export async function GET(request: Request) {
+  if (!supabaseConfigured) {
+    return NextResponse.json({ error: SUPABASE_MISSING_MSG }, { status: 503 });
+  }
   const { searchParams } = new URL(request.url);
 
   // Auth: support both query param (?secret=...) and Vercel cron header (Authorization: Bearer ...)

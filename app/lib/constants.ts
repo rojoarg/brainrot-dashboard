@@ -25,16 +25,21 @@ export const RARITY_ORDER = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 
 
 export const TIER_CLS: Record<string, string> = { S: 'tier-S', A: 'tier-A', B: 'tier-B', C: 'tier-C', D: 'tier-D' };
 
+// Full in-game mutation table (update 47+, June 2026). Eldorado spells
+// "Yin-Yang" with a hyphen in listing data — keep BOTH keys so lookups
+// never miss. Disco (12x) is confirmed in game data but unreleased.
 export const MUTATION_MULTIPLIERS: Record<string, number> = {
-  'None': 1, 'Lava': 6, 'Galaxy': 7, 'Yin Yang': 7.5,
-  'Radioactive': 8.5, 'Extinct': 1, 'Cursed': 9, 'Rainbow': 10,
-  'Divine': 10, 'Cyber': 11,
+  'None': 1, 'Extinct': 1, 'Gold': 1.25, 'Diamond': 1.5, 'Bloodrot': 2,
+  'Candy': 4, 'Lava': 6, 'Galaxy': 7, 'Yin Yang': 7.5, 'Yin-Yang': 7.5,
+  'Radioactive': 8.5, 'Cursed': 9, 'Rainbow': 10, 'Divine': 10,
+  'Cyber': 11, 'Disco': 12,
 };
 
 export const MUTATION_COLORS: Record<string, string> = {
-  'Lava': '#ff4500', 'Galaxy': '#7c4dff', 'Yin Yang': '#e0e0e0',
+  'Gold': '#ffd700', 'Diamond': '#b9f2ff', 'Bloodrot': '#d32f2f', 'Candy': '#ff80ab',
+  'Lava': '#ff4500', 'Galaxy': '#7c4dff', 'Yin Yang': '#e0e0e0', 'Yin-Yang': '#e0e0e0',
   'Radioactive': '#76ff03', 'Extinct': '#78909c', 'Cursed': '#00e676',
-  'Rainbow': '#ff4081', 'Divine': '#ffd740', 'Cyber': '#00e5ff',
+  'Rainbow': '#ff4081', 'Divine': '#ffd740', 'Cyber': '#00e5ff', 'Disco': '#e040fb',
 };
 
 // Lower = higher priority. OG is always #1, Brainrot God is #2.

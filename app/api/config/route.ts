@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseConfigured, SUPABASE_MISSING_MSG } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET() {
+  if (!supabaseConfigured) {
+    return NextResponse.json({ error: SUPABASE_MISSING_MSG }, { status: 503 });
+  }
   try {
     const [{ data: watchlist, error: wlErr }, { data: blacklist, error: blErr }] = await Promise.all([
       supabase.from('brainrot_watchlist').select('*').order('priority'),
@@ -54,6 +57,9 @@ function sanitizePetName(name: string): string {
 }
 
 export async function POST(request: Request) {
+  if (!supabaseConfigured) {
+    return NextResponse.json({ success: false, error: SUPABASE_MISSING_MSG }, { status: 503 });
+  }
   try {
     // Auth: only require auth if CONFIG_SECRET is explicitly set.
     // CRON_SECRET is for the scraper — config saves from the browser should work without it.

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseConfigured, SUPABASE_MISSING_MSG } from '@/lib/supabase';
 import { RARITY_WEIGHT, RARITY_SCORE_BONUS, RARITY_TIER_FLOOR } from '../../lib/constants';
 
 export const revalidate = 300;
@@ -71,6 +71,9 @@ async function fetchAllListings(): Promise<any[]> {
 }
 
 export async function GET(request: Request) {
+  if (!supabaseConfigured) {
+    return NextResponse.json({ error: SUPABASE_MISSING_MSG }, { status: 503 });
+  }
   try {
   // Rate limiting
   const forwarded = request.headers.get('x-forwarded-for');
