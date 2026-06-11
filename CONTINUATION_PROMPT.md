@@ -51,13 +51,17 @@ Gem tiers (default): $20+→1M · $10-20→1B · $5-10→1.5B · <$5→2B. Farme
 
 ## VERIFIED STATE (2026-06-11)
 
-- Full local scrape: 48,770 listings / 275 brainrots / 1,665 sellers in 4m39s; top rec Headless Horseman (OG) $5,669 ✓
-- Eldorado API caps pagination at page 1000 (~50k of its 54k records) — coverage ~90%; remaining tail would need filtered sub-queries (per-rarity) if ever needed.
+- Full local scrape with coverage top-up: 51,439 listings / 275 brainrots, ~14 min; raw coverage 95.2% of Eldorado's own recordCount (the gap is the discarded 'Other' junk bucket + search recordCount inflation from bundle titles — named coverage is effectively complete).
+- Eldorado API facts: pageSize hard-capped at 50; pagination 400s past ~page 1000 (treated as end-of-market); `searchQuery` does server-side search and bypasses the page cap (used for the per-name top-up); listing attributes are still only Rarity tree + Mutations + M/s (no Traits exposed).
+- Mutations: full table incl. Phantom (added June 11 2026, multiplier ESTIMATED 12x — confirm and update constants when known; scraper captures Phantom listings automatically).
+- Export formats: presets + custom key mapping persisted in localStorage; import accepts any common config shape (parseConfigImport).
+- `scripts/coverage-check.js` prints coverage diagnostics against the local DB.
 
 ## OPEN / NEXT (the "100x" roadmap)
 
-1. Surface price history (collected daily per combo — barely shown in UI): trend charts, pump detection.
-2. Config validation feedback: explain WHY each item was included.
-3. Sold-velocity (sold/day) signals once the sold archive accumulates locally.
-4. UI refresh of secondary tabs; installer icon (assets/icon.ico missing — using Electron default).
-5. profitScore weights never validated against real trading outcomes.
+1. Confirm Phantom's real multiplier (announced in sammy's Discord; no public source yet).
+2. Surface price history (collected daily per combo — barely shown in UI): trend charts, pump detection.
+3. Config validation feedback: explain WHY each item was included.
+4. Sold-velocity (sold/day) signals once the sold archive accumulates locally.
+5. UI refresh of secondary tabs.
+6. profitScore weights never validated against real trading outcomes.
