@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { Config, DashData, Recommendation, WLItem } from '../../lib/types';
-import { fmtPrice, fmtMinValue, smartMinValue, downloadConfigJSON, getMutationAdvisory, getRarityWeight, getMaxMutationPrice, getMutationSummary, type GemMode } from '../../lib/utils';
+import { fmtPrice, fmtMinValue, smartMinValue, getMutationAdvisory, getRarityWeight, getMaxMutationPrice, getMutationSummary, parseConfigImport, formatConfigExport, downloadJSONFile, EXPORT_PRESETS, DEFAULT_EXPORT_FORMAT, type ExportFormat, type GemMode } from '../../lib/utils';
 import { RarityBadge, TierBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -94,6 +94,38 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
   const [addPetInput, setAddPetInput] = useState('');
   const [manualPets, setManualPets] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+
+  /* ─── Export format (persisted) ─── */
+  const [exportFormatId, setExportFormatId] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'standard';
+    return window.localStorage?.getItem('brainrot-export-format-id') || 'standard';
+  });
+  const [customFormat, setCustomFormat] = useState<ExportFormat>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = window.localStorage?.getItem('brainrot-export-format-custom');
+        if (saved) return { ...DEFAULT_EXPORT_FORMAT, ...JSON.parse(saved), id: 'custom', label: 'Custom' };
+      } catch { /* corrupt — fall through to default */ }
+    }
+    return { ...DEFAULT_EXPORT_FORMAT, id: 'custom', label: 'Custom' };
+  });
+  const [showFormatEditor, setShowFormatEditor] = useState(false);
+  const exportFormat: ExportFormat = exportFormatId === 'custom'
+    ? customFormat
+    : (EXPORT_PRESETS.find(p => p.id === exportFormatId) || DEFAULT_EXPORT_FORMAT);
+
+  const pickExportFormat = (id: string) => {
+    setExportFormatId(id);
+    try { window.localStorage?.setItem('brainrot-export-format-id', id); } catch {}
+    setShowFormatEditor(id === 'custom');
+  };
+  const updateCustomFormat = (patch: Partial<ExportFormat>) => {
+    setCustomFormat(prev => {
+      const next = { ...prev, ...patch };
+      try { window.localStorage?.setItem('brainrot-export-format-custom', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
   const strat = STRATEGIES[activeStrategy];
   const gemMode: GemMode = strat?.gemMode || 'default';
@@ -214,11 +246,18 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return wl;
   };
 
-  /* ─── Generate + download ─── */
+  /* ─── Generate + download (in the user's chosen export format) ─── */
   const generateAndDownload = () => {
     const genConfig: Config = { whitelisted: buildWhitelist(), blacklisted: config.blacklisted, version: '1.0' };
     setConfig(genConfig);
-    downloadConfigJSON(genConfig, showToast, data.recommendations, gemMode);
+    const exportObj = formatConfigExport(genConfig, exportFormat);
+    const mutCount = genConfig.whitelisted.filter(w => w.mutations && Object.keys(w.mutations).length > 0).length;
+    downloadJSONFile(
+      exportObj,
+      `brainrot-config-${new Date().toISOString().split('T')[0]}.json`,
+      showToast,
+      `Exported ${genConfig.whitelisted.length} items (${exportFormat.label})` + (exportFormat.includeMutations && mutCount > 0 ? ` · ${mutCount} with mutation overrides` : ''),
+    );
   };
 
   /* ─── Save to DB — saves exactly what Download would export ─── */
@@ -236,7 +275,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     finally { setIsSaving(false); }
   };
 
-  /* ─── Import JSON ─── */
+  /* ─── Import JSON — accepts ANY common auto-joiner config shape ─── */
   const importConfig = () => {
     const input = document.createElement('input');
     input.type = 'file'; input.accept = '.json';
@@ -247,20 +286,11 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       reader.onload = (ev) => {
         try {
           const imported = JSON.parse(ev.target?.result as string);
-          if (!imported?.whitelisted || !Array.isArray(imported.whitelisted)) { showToast('Invalid config'); return; }
-          const wl: WLItem[] = imported.whitelisted.map((w: any, i: number) => {
-            const pet_name = (w?.pet_name || w?.name || '').toString().trim();
-            const item: WLItem = { pet_name, priority: typeof w?.priority === 'number' ? w.priority : i, min_value: typeof w?.min_value === 'number' && w.min_value > 0 ? w.min_value : 1000000 };
-            if (w?.mutations && typeof w.mutations === 'object') {
-              const muts: Record<string, number> = {};
-              for (const [k, v] of Object.entries(w.mutations)) { if (typeof v === 'number' && v > 0) muts[k] = v; }
-              if (Object.keys(muts).length > 0) item.mutations = muts;
-            }
-            return item;
-          }).filter((w: WLItem) => w.pet_name.length > 0);
-          const bl = Array.isArray(imported.blacklisted) ? imported.blacklisted.filter((b: unknown) => typeof b === 'string' && (b as string).trim().length > 0).map((b: string) => b.trim()) : [];
-          setConfig({ whitelisted: wl, blacklisted: bl, version: '1.0' });
-          showToast(`Imported ${wl.length} items`);
+          const parsed = parseConfigImport(imported);
+          if (!parsed) { showToast('No recognizable config in that file (looked for whitelist/items/pets arrays)'); return; }
+          setConfig({ whitelisted: parsed.whitelisted, blacklisted: parsed.blacklisted, version: '1.0' });
+          showToast(`Imported ${parsed.whitelisted.length} items + ${parsed.blacklisted.length} blacklisted`
+            + (parsed.warnings.length > 0 ? ` (${parsed.warnings.length} skipped)` : ''));
         } catch (e) { showToast('Failed to parse: ' + (e instanceof Error ? e.message : 'unknown')); }
       };
       reader.readAsText(file);
@@ -466,13 +496,62 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
               {tableSearch.trim() ? ` · ${displayResults.length} shown` : ''}
             </span>
           </div>
-          <div className="d-flex gap-2 flex-wrap">
+          <div className="d-flex gap-2 flex-wrap items-center">
+            <select className="select text-xs" value={exportFormatId} aria-label="Export format"
+              style={{ minHeight: 30, fontSize: '0.7rem', maxWidth: 150 }}
+              onChange={e => pickExportFormat(e.target.value)}>
+              {EXPORT_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+              <option value="custom">Custom format…</option>
+            </select>
+            {exportFormatId === 'custom' && (
+              <button type="button" className="btn btn-sm" onClick={() => setShowFormatEditor(!showFormatEditor)} style={{ fontSize: '0.65rem' }}>
+                {showFormatEditor ? 'Hide keys' : 'Edit keys'}
+              </button>
+            )}
             <button type="button" className="btn-cta" onClick={generateAndDownload} disabled={exportResults.length === 0 && manualPets.length === 0}>
               Download Config ({exportResults.length + manualPets.length})
             </button>
             <button type="button" className="btn btn-sm" onClick={saveConfig} disabled={isSaving || (exportResults.length === 0 && manualPets.length === 0)}>{isSaving ? 'Saving...' : 'Save to DB'}</button>
           </div>
         </div>
+
+        {/* Custom export format editor */}
+        {exportFormatId === 'custom' && showFormatEditor && (
+          <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
+            <div className="text-xs fw-600 text-sub mb-1">Custom export keys — match your auto-joiner&apos;s JSON format</div>
+            <div className="d-flex gap-2 flex-wrap items-end">
+              {([
+                { key: 'wlKey' as const, label: 'Whitelist key' },
+                { key: 'blKey' as const, label: 'Blacklist key' },
+                { key: 'nameKey' as const, label: 'Name key' },
+                { key: 'priorityKey' as const, label: 'Priority key' },
+                { key: 'minValueKey' as const, label: 'Min value key' },
+                { key: 'mutationsKey' as const, label: 'Mutations key' },
+              ]).map(f => (
+                <div key={f.key}>
+                  <label className="config-label" style={{ fontSize: '0.6rem' }}>{f.label}</label>
+                  <input className="input" style={{ width: 110, minHeight: 28, fontSize: 11 }}
+                    value={customFormat[f.key]}
+                    onChange={e => updateCustomFormat({ [f.key]: e.target.value.trim() || DEFAULT_EXPORT_FORMAT[f.key] })} />
+                </div>
+              ))}
+            </div>
+            <div className="d-flex gap-3 flex-wrap mt-1">
+              {([
+                { key: 'includePriority' as const, label: 'priority' },
+                { key: 'includeMinValue' as const, label: 'min value' },
+                { key: 'includeMutations' as const, label: 'mutations' },
+                { key: 'namesOnly' as const, label: 'names only' },
+                { key: 'includeVersion' as const, label: 'version field' },
+              ]).map(f => (
+                <label key={f.key} className="text-xs d-flex items-center gap-1" style={{ cursor: 'pointer' }}>
+                  <input type="checkbox" checked={customFormat[f.key]} onChange={e => updateCustomFormat({ [f.key]: e.target.checked })} />
+                  {f.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Summary bar */}
         {exportResults.length > 0 && (
@@ -686,11 +765,10 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
             {showPreview && (
               <div style={{ padding: '8px 14px', maxHeight: 300, overflow: 'auto', background: 'var(--bg)', borderTop: '1px solid var(--border)' }}>
                 <pre className="text-mono text-xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text2)', lineHeight: 1.5 }}>
-                  {JSON.stringify({
-                    blacklisted: config.blacklisted,
-                    whitelisted: buildWhitelist(),
-                    version: '1.0'
-                  }, null, 2)}
+                  {JSON.stringify(
+                    formatConfigExport({ whitelisted: buildWhitelist(), blacklisted: config.blacklisted, version: '1.0' }, exportFormat),
+                    null, 2,
+                  )}
                 </pre>
               </div>
             )}

@@ -168,30 +168,47 @@ export default function Dashboard() {
   const [isScraping, setIsScraping] = useState(false);
   const scrapePollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (scrapePollRef.current) clearInterval(scrapePollRef.current); }, []);
-  const latestRun = data?.meta?.scrapeRuns?.[0];
-  // Treat DB-reported 'running' as live only if it started recently (stale runs get failed on next trigger)
-  const dbSaysRunning = latestRun?.status === 'running' && !!latestRun.startedAt
-    && (Date.now() - new Date(latestRun.startedAt).getTime()) < 30 * 60 * 1000;
-  const scrapeRunning = isScraping || dbSaysRunning;
+  const scrapeRunning = isScraping;
 
+  const wasScrapingRef = React.useRef(false);
   const watchScrape = useCallback(() => {
-    setIsScraping(true);
     if (scrapePollRef.current) clearInterval(scrapePollRef.current);
-    scrapePollRef.current = setInterval(async () => {
+    const poll = async () => {
       try {
         const s = await fetch('/api/scrape?action=status').then(r => r.json());
         const status = s?.run?.status;
-        if (status && status !== 'running') {
+        if (status === 'running') {
+          wasScrapingRef.current = true;
+          setIsScraping(true);
+        } else if (status) {
           if (scrapePollRef.current) { clearInterval(scrapePollRef.current); scrapePollRef.current = null; }
           setIsScraping(false);
-          refresh();
-          showToast(status === 'completed'
-            ? `Scrape done: ${s.run.total_listings?.toLocaleString() || '?'} listings`
-            : 'Scrape failed — try again');
+          if (wasScrapingRef.current) {
+            wasScrapingRef.current = false;
+            refresh();
+            showToast(status === 'completed'
+              ? `Scrape done: ${s.run.total_listings?.toLocaleString() || '?'} listings`
+              : 'Scrape failed — try again');
+          }
         }
       } catch { /* transient poll error — keep waiting */ }
-    }, 5000);
+    };
+    poll();
+    scrapePollRef.current = setInterval(poll, 5000);
   }, [refresh, showToast]);
+
+  // If the app loads while a scrape is already running (e.g. Electron
+  // auto-scrape on launch), attach the progress poller automatically.
+  // Stale 'running' rows (crashed runs >30 min old) are ignored — the next
+  // trigger marks them failed.
+  useEffect(() => {
+    const run = data?.meta?.scrapeRuns?.[0];
+    if (!isScraping && run?.status === 'running' && run.startedAt
+      && Date.now() - new Date(run.startedAt).getTime() < 30 * 60 * 1000) {
+      watchScrape();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, watchScrape]);
 
   const triggerScrape = useCallback(async () => {
     if (scrapeRunning) return;
@@ -200,6 +217,8 @@ export default function Dashboard() {
       const j = await res.json().catch(() => ({}));
       if (res.status === 409) {
         showToast('Scrape already running');
+        wasScrapingRef.current = true;
+        setIsScraping(true);
         watchScrape();
         return;
       }
@@ -208,6 +227,8 @@ export default function Dashboard() {
         return;
       }
       showToast('Scrape started — full market sweep takes ~5-10 min');
+      wasScrapingRef.current = true;
+      setIsScraping(true);
       watchScrape();
     } catch {
       showToast('Could not reach the scraper');

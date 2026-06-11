@@ -336,6 +336,133 @@ export function getMutationAdvisory(rec: Recommendation, gemMode: GemMode = 'def
   return advisories.sort((a, b) => b.priceRatio - a.priceRatio);
 }
 
+/* ─── Universal config import ─── */
+/**
+ * Parses ANY common auto-joiner config shape into our canonical Config.
+ * Accepts: bare arrays, whitelist/whitelisted/items/pets/targets keys,
+ * string entries or objects with pet_name/petName/name/pet/brainrot,
+ * priority/prio/order/rank, min_value/minValue/gems/minGems, mutations.
+ * Returns null only when nothing usable was found.
+ */
+export function parseConfigImport(raw: unknown): { whitelisted: WLItem[]; blacklisted: string[]; warnings: string[] } | null {
+  if (raw == null) return null;
+  const warnings: string[] = [];
+  let wlRaw: any[] | null = null;
+  let blRaw: any[] = [];
+
+  if (Array.isArray(raw)) {
+    wlRaw = raw;
+  } else if (typeof raw === 'object') {
+    const obj = raw as Record<string, any>;
+    const wlKey = ['whitelisted', 'whitelist', 'white_list', 'items', 'pets', 'targets', 'wl'].find(k => Array.isArray(obj[k]));
+    const blKey = ['blacklisted', 'blacklist', 'black_list', 'excluded', 'ignored', 'bl'].find(k => Array.isArray(obj[k]));
+    if (wlKey) wlRaw = obj[wlKey];
+    if (blKey) blRaw = obj[blKey];
+  }
+  if (!wlRaw && blRaw.length === 0) return null;
+
+  const wl: WLItem[] = [];
+  (wlRaw || []).forEach((w: any, i: number) => {
+    if (typeof w === 'string') {
+      const name = w.trim();
+      if (name) wl.push({ pet_name: name, priority: i, min_value: 1000000 });
+      return;
+    }
+    if (!w || typeof w !== 'object') return;
+    const name = String(w.pet_name ?? w.petName ?? w.name ?? w.pet ?? w.brainrot ?? '').trim();
+    if (!name) { warnings.push(`item ${i + 1}: no recognizable name field`); return; }
+    const prio = [w.priority, w.prio, w.order, w.rank].find((v: any) => typeof v === 'number' && isFinite(v) && v >= 0);
+    const minV = [w.min_value, w.minValue, w.gems, w.min_gems, w.minGems, w.value].find((v: any) => typeof v === 'number' && isFinite(v) && v > 0);
+    const item: WLItem = { pet_name: name, priority: prio ?? i, min_value: minV ?? 1000000 };
+    const mutsRaw = w.mutations ?? w.mutation_overrides ?? w.mutationOverrides ?? w.muts;
+    if (mutsRaw && typeof mutsRaw === 'object' && !Array.isArray(mutsRaw)) {
+      const muts: Record<string, number> = {};
+      for (const [k, v] of Object.entries(mutsRaw)) {
+        if (typeof k === 'string' && k.length > 0 && typeof v === 'number' && isFinite(v) && v > 0) muts[k] = v;
+      }
+      if (Object.keys(muts).length > 0) item.mutations = muts;
+    }
+    wl.push(item);
+  });
+
+  const bl = blRaw.filter((b: any) => typeof b === 'string' && b.trim().length > 0).map((b: string) => b.trim());
+  if (wl.length === 0 && bl.length === 0) return null;
+  return { whitelisted: wl, blacklisted: bl, warnings };
+}
+
+/* ─── Custom export formats ─── */
+/**
+ * Users run different auto-joiners with different JSON shapes. An ExportFormat
+ * maps our canonical config onto whatever keys their tool expects.
+ */
+export interface ExportFormat {
+  id: string;
+  label: string;
+  wlKey: string;
+  blKey: string;
+  nameKey: string;
+  priorityKey: string;
+  minValueKey: string;
+  mutationsKey: string;
+  includePriority: boolean;
+  includeMinValue: boolean;
+  includeMutations: boolean;
+  namesOnly: boolean;       // whitelist entries as plain name strings
+  includeVersion: boolean;
+}
+
+export const DEFAULT_EXPORT_FORMAT: ExportFormat = {
+  id: 'standard', label: 'Standard (snake_case)',
+  wlKey: 'whitelisted', blKey: 'blacklisted',
+  nameKey: 'pet_name', priorityKey: 'priority', minValueKey: 'min_value', mutationsKey: 'mutations',
+  includePriority: true, includeMinValue: true, includeMutations: true,
+  namesOnly: false, includeVersion: true,
+};
+
+export const EXPORT_PRESETS: ExportFormat[] = [
+  DEFAULT_EXPORT_FORMAT,
+  {
+    id: 'camel', label: 'camelCase keys',
+    wlKey: 'whitelist', blKey: 'blacklist',
+    nameKey: 'petName', priorityKey: 'priority', minValueKey: 'minValue', mutationsKey: 'mutations',
+    includePriority: true, includeMinValue: true, includeMutations: true,
+    namesOnly: false, includeVersion: true,
+  },
+  {
+    id: 'names', label: 'Names only',
+    wlKey: 'whitelisted', blKey: 'blacklisted',
+    nameKey: 'pet_name', priorityKey: 'priority', minValueKey: 'min_value', mutationsKey: 'mutations',
+    includePriority: false, includeMinValue: false, includeMutations: false,
+    namesOnly: true, includeVersion: false,
+  },
+];
+
+export function formatConfigExport(config: Config, fmt: ExportFormat): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  out[fmt.blKey] = config.blacklisted || [];
+  out[fmt.wlKey] = (config.whitelisted || []).map((w: WLItem, i: number) => {
+    if (fmt.namesOnly) return w.pet_name;
+    const o: Record<string, unknown> = { [fmt.nameKey]: w.pet_name };
+    if (fmt.includePriority) o[fmt.priorityKey] = w.priority ?? i;
+    if (fmt.includeMinValue) o[fmt.minValueKey] = w.min_value || 1000000;
+    if (fmt.includeMutations && w.mutations && Object.keys(w.mutations).length > 0) o[fmt.mutationsKey] = w.mutations;
+    return o;
+  });
+  if (fmt.includeVersion) out.version = '1.0';
+  return out;
+}
+
+export function downloadJSONFile(obj: unknown, filename: string, toast?: (msg: string) => void, toastMsg?: string) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  if (toast && toastMsg) toast(toastMsg);
+}
+
 /* ─── Config Helpers ─── */
 export const buildConfigJSON = (config: Config, recommendations?: Recommendation[], gemMode: GemMode = 'default') => ({
   blacklisted: config.blacklisted || [],

@@ -25,14 +25,17 @@ export const RARITY_ORDER = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 
 
 export const TIER_CLS: Record<string, string> = { S: 'tier-S', A: 'tier-A', B: 'tier-B', C: 'tier-C', D: 'tier-D' };
 
-// Full in-game mutation table (update 47+, June 2026). Eldorado spells
-// "Yin-Yang" with a hyphen in listing data — keep BOTH keys so lookups
-// never miss. Disco (12x) is confirmed in game data but unreleased.
+// Full in-game mutation table (June 2026). Eldorado spells "Yin-Yang" with
+// a hyphen in listing data — keep BOTH keys so lookups never miss.
+// Disco (12x) is confirmed in game data but unreleased.
+// Phantom: brand new (June 11 2026) — multiplier is an ESTIMATE until
+// confirmed (no listings or guides exist yet); the scraper captures any
+// Phantom listings automatically the moment they appear on Eldorado.
 export const MUTATION_MULTIPLIERS: Record<string, number> = {
   'None': 1, 'Extinct': 1, 'Gold': 1.25, 'Diamond': 1.5, 'Bloodrot': 2,
   'Candy': 4, 'Lava': 6, 'Galaxy': 7, 'Yin Yang': 7.5, 'Yin-Yang': 7.5,
   'Radioactive': 8.5, 'Cursed': 9, 'Rainbow': 10, 'Divine': 10,
-  'Cyber': 11, 'Disco': 12,
+  'Cyber': 11, 'Disco': 12, 'Phantom': 12,
 };
 
 export const MUTATION_COLORS: Record<string, string> = {
@@ -40,7 +43,12 @@ export const MUTATION_COLORS: Record<string, string> = {
   'Lava': '#ff4500', 'Galaxy': '#7c4dff', 'Yin Yang': '#e0e0e0', 'Yin-Yang': '#e0e0e0',
   'Radioactive': '#76ff03', 'Extinct': '#78909c', 'Cursed': '#00e676',
   'Rainbow': '#ff4081', 'Divine': '#ffd740', 'Cyber': '#00e5ff', 'Disco': '#e040fb',
+  'Phantom': '#90a4ae',
 };
+
+// Fallback for mutations the game adds before this file is updated —
+// unknown mutations still render distinctly instead of looking broken.
+export const UNKNOWN_MUTATION_COLOR = '#26c6da';
 
 // Lower = higher priority. OG is always #1, Brainrot God is #2.
 export const RARITY_WEIGHT: Record<string, number> = {

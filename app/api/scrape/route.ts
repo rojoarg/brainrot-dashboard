@@ -105,6 +105,35 @@ async function fetchPage(page: number, retries = 2): Promise<Listing[] | null> {
   return null;
 }
 
+/**
+ * Server-side search page (the same `searchQuery` the Eldorado site uses).
+ * Used by the coverage top-up: pagination is capped at ~page 1000, but
+ * search slices the market small enough to reach everything.
+ */
+async function fetchSearchPage(query: string, page: number): Promise<{ listings: Listing[]; recordCount: number } | null> {
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    try {
+      const res = await fetch(`${ELDORADO_API}${page}&searchQuery=${encodeURIComponent(query)}`, {
+        headers: { 'User-Agent': 'BrainrotDashboard/4.0' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.status === 429) {
+        await new Promise(r => setTimeout(r, 2500));
+        continue;
+      }
+      if (!res.ok) return null;
+      const data = await res.json();
+      return {
+        listings: ((data.results || []) as any[]).map(parseListing).filter(Boolean) as Listing[],
+        recordCount: data.recordCount || 0,
+      };
+    } catch {
+      if (attempt === 0) await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  return null;
+}
+
 // Sanitize text for safe insertion — strips null bytes and control chars
 function sanitizeText(val: string | null, maxLen: number = 500): string {
   if (!val) return '';
@@ -200,6 +229,49 @@ async function runFullScrape(runId: number): Promise<void> {
       if (!reachedEnd) await new Promise(r => setTimeout(r, 300));
     }
 
+    // ─── Coverage top-up ───
+    // Eldorado caps pagination (~page 1000 ≈ 50k listings) but the market is
+    // bigger. For every name whose staged count is below its searchQuery
+    // recordCount, pull the search pages — search bypasses the page cap.
+    // (recordCount includes substring matches of other pets, so some fetches
+    // are redundant; the offer_id upsert dedupes them.)
+    let marketTotal = 0;
+    try {
+      const totalRes = await fetch(ELDORADO_API + '1', {
+        headers: { 'User-Agent': 'BrainrotDashboard/4.0' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (totalRes.ok) marketTotal = (await totalRes.json()).recordCount || 0;
+    } catch { /* non-critical */ }
+
+    const stagedTotal = () => (db.prepare('SELECT COUNT(*) AS c FROM brainrot_listings_staging').get() as any).c as number;
+    if (marketTotal > 0 && stagedTotal() < marketTotal * 0.99) {
+      const names = db.prepare('SELECT name, COUNT(*) AS c FROM brainrot_listings_staging GROUP BY name ORDER BY c DESC').all() as { name: string; c: number }[];
+      console.log(`Coverage top-up: staged ${stagedTotal()} of ~${marketTotal} — checking ${names.length} names via search`);
+      let topUpPages = 0;
+      for (const { name, c } of names) {
+        if (name === 'Other') continue; // Eldorado's misc bucket — discarded by the dashboard anyway
+        const first = await fetchSearchPage(name, 1);
+        if (!first) continue;
+        if (first.listings.length > 0) insertBatch(first.listings.map(toDbRow));
+        if (first.recordCount > c && first.recordCount > first.listings.length) {
+          // 200-page ceiling (10k listings/name) — top names run ~3.5k today
+          const lastPage = Math.min(Math.ceil(first.recordCount / 50), 200);
+          for (let p = 2; p <= lastPage; p++) {
+            const more = await fetchSearchPage(name, p);
+            if (!more || more.listings.length === 0) break;
+            insertBatch(more.listings.map(toDbRow));
+            topUpPages++;
+            await new Promise(r => setTimeout(r, 200));
+          }
+        }
+        await new Promise(r => setTimeout(r, 150));
+      }
+      const finalStaged = stagedTotal();
+      updateProgress.run(pagesScraped, pagesScraped, pagesFailed, finalStaged, runId);
+      console.log(`Coverage top-up done: +${topUpPages} extra pages, staged ${finalStaged}/${marketTotal} (${marketTotal > 0 ? Math.round(finalStaged / marketTotal * 100) : 0}%)`);
+    }
+
     // ─── Finalize: atomic swap + snapshots + cleanup ───
     const swap = swapStagingToLive(MIN_LISTINGS_FOR_SWAP);
     if (swap.status === 'ABORTED') {
@@ -250,18 +322,21 @@ async function runFullScrape(runId: number): Promise<void> {
       console.error('Price snapshot generation failed:', snapErr?.message || snapErr);
     }
 
-    // Eldorado's own total for coverage tracking — non-critical
-    let eldoradoTotal = 0;
-    try {
-      const countRes = await fetch(ELDORADO_API + '1', {
-        headers: { 'User-Agent': 'BrainrotDashboard/4.0' },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (countRes.ok) {
-        const countData = await countRes.json();
-        eldoradoTotal = countData.recordCount || 0;
-      }
-    } catch { /* non-critical */ }
+    // Eldorado's own total for coverage tracking (already fetched for the
+    // top-up; refetch only if that failed) — non-critical
+    let eldoradoTotal = marketTotal;
+    if (eldoradoTotal === 0) {
+      try {
+        const countRes = await fetch(ELDORADO_API + '1', {
+          headers: { 'User-Agent': 'BrainrotDashboard/4.0' },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (countRes.ok) {
+          const countData = await countRes.json();
+          eldoradoTotal = countData.recordCount || 0;
+        }
+      } catch { /* non-critical */ }
+    }
 
     const liveStats = db.prepare(
       'SELECT COALESCE(SUM(quantity), 0) AS qty, COALESCE(AVG(price), 0) AS avg, COALESCE(SUM(is_trending), 0) AS trending FROM brainrot_listings'
