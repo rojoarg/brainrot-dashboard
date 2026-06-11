@@ -55,7 +55,8 @@ export function getMutationSummary(rec: Recommendation | null | undefined): { co
 }
 
 /**
- * Unified priority calculator — used by BOTH ConfigTab and page.tsx addToWL.
+ * Unified priority calculator — used by page.tsx addToWL.
+ * (ConfigTab generates sequential priorities from its sorted list by design.)
  * Lower number = higher priority (0 is first).
  *
  * Formula: PRICE is the primary signal (more expensive = higher priority for the
@@ -140,7 +141,7 @@ export const raritySort = (a: string, b: string) =>
 /**
  * Gem budget mode — different strategies need different gem tiers.
  *
- * 'default'  = All-Star, Sniper, Whale, Trending, Diversified
+ * 'default'  = All-Star, Trending
  *              Full gem budgets for competitive buying
  * 'farmer'   = Farmer
  *              Uses p25 pricing, tighter gem budgets (volume focus)
@@ -213,25 +214,20 @@ export function smartMinValue(
     //
     // $10-20  → 50M    (solid finds, worth moderate gems)
     // $5-10   → 100M   (bread and butter farming range)
-    // $2-5    → 300M   (cheap farm targets)
-    // <$2     → 50M    (filler)
+    // <$5     → 300M   (cheap/junk — needs a high gem value to be worth a slot)
     if (price >= 10) return 50000000;
     if (price >= 5) return 100000000;
-    if (price >= 2) return 300000000;
-    return 50000000;
+    return 300000000;
   }
 
   if (mode === 'budget') {
     // Budget = CHEAPEST possible gem spend, high ROI focus.
     // Even tighter than Farmer — only spend gems when the deal is great.
     //
-    // $10-20  → 50M
-    // $5-10   → 50M
-    // $2-5    → 100M
-    // $1-2    → 50M
+    // $5-20   → 50M
+    // <$5     → 100M  (cheap/junk — higher bar, inverted logic)
     if (price >= 5) return 50000000;
-    if (price >= 2) return 100000000;
-    return 50000000;
+    return 100000000;
   }
 
   if (mode === 'flipper') {
@@ -240,25 +236,25 @@ export function smartMinValue(
     //
     // $10-20  → 500M
     // $5-10   → 1B
-    // $2-5    → 1.5B
-    // <$2     → 1M
+    // <$5     → 1.5B  (cheap/junk — highest bar, inverted logic)
     if (price >= 10) return 500000000;
     if (price >= 5) return 1000000000;
-    if (price >= 2) return 1500000000;
-    return 1000000;
+    return 1500000000;
   }
 
-  // ═══ DEFAULT (All-Star, Sniper, Whale, Trending, Diversified) ═══
+  // ═══ DEFAULT (All-Star, Trending) ═══
   // Full competitive gem budgets for serious buying.
   //
   // $10-20  → 1B    (good items — standard gem budget)
   // $5-10   → 1.5B  (mid-range trades)
-  // $2-5    → 2B    (cheap common trades — max gem budget)
-  // <$2     → 1M    (junk floor — shouldn't be in config)
+  // <$5     → 2B    (cheap/junk — only grab on a freak high gem value)
+  //
+  // NOTE: thresholds must stay monotonic — cheaper USD ⇒ higher gem bar.
+  // A junk base pet must NEVER get a permissive 1M (a $1 pet with a $30
+  // mutation is pinned premium, but only the MUTATION should be 1M).
   if (price >= 10) return 1000000000;
   if (price >= 5) return 1500000000;
-  if (price >= 2) return 2000000000;
-  return 1000000;
+  return 2000000000;
 }
 
 /* ─── Mutation Advisory ─── */
@@ -310,6 +306,10 @@ export function getMutationAdvisory(rec: Recommendation, gemMode: GemMode = 'def
     const avgMed = pricedCombos.length > 0
       ? pricedCombos.reduce((s, c) => s + (c.med || 0), 0) / pricedCombos.length
       : 0;
+    // No price data at all → never emit an override. smartMinValue would
+    // return the permissive 1M floor, telling the bot "grab any copy" of a
+    // mutation we know nothing about.
+    if (avgMed <= 0) continue;
     const priceRatio = baseMed > 0 ? avgMed / baseMed : 1;
     if (!isFinite(priceRatio) || isNaN(priceRatio)) continue;
     const multiplier = MUTATION_MULTIPLIERS[mut] || 0;

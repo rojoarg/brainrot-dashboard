@@ -146,77 +146,89 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     return combined.slice(0, maxN);
   }, [filtered, strat, maxItems]);
 
-  /* ─── Apply quick filters + search on display ─── */
-  const displayResults = useMemo(() => {
+  /* ─── Export list: removals + quick filters shape the config ─── */
+  const exportResults = useMemo(() => {
     let list = results.filter(r => !removedItems.has(r.name));
-    // Quick filters
     if (quickFilters.has('hasSold')) list = list.filter(r => (r.soldCount ?? 0) > 0);
     if (quickFilters.has('hasMutations')) list = list.filter(r => getMutationSummary(r).count > 0);
     if (quickFilters.has('tierS')) list = list.filter(r => r.tier === 'S');
     if (quickFilters.has('tierA')) list = list.filter(r => r.tier === 'S' || r.tier === 'A');
     if (quickFilters.has('premium')) list = list.filter(r => Math.max(r.med ?? 0, getMaxMutationPrice(r)) >= PREMIUM_THRESHOLD);
-    // Table search
-    if (tableSearch.trim()) {
-      const q = tableSearch.toLowerCase().trim();
-      list = list.filter(r => r.name.toLowerCase().includes(q) || r.rarity.toLowerCase().includes(q));
-    }
     return list;
-  }, [results, removedItems, quickFilters, tableSearch]);
+  }, [results, removedItems, quickFilters]);
+
+  /* ─── Table search is VIEW-ONLY — it never changes what gets exported ─── */
+  const displayResults = useMemo(() => {
+    if (!tableSearch.trim()) return exportResults;
+    const q = tableSearch.toLowerCase().trim();
+    return exportResults.filter(r => r.name.toLowerCase().includes(q) || r.rarity.toLowerCase().includes(q));
+  }, [exportResults, tableSearch]);
 
   const getMinValue = (r: Recommendation) => {
     if (minValueOverrides[r.name] != null) return minValueOverrides[r.name];
     return smartMinValue(r, undefined, gemMode);
   };
 
-  /* ─── Summary stats ─── */
+  /* ─── Summary stats (over the EXPORT list — what the config will contain) ─── */
   const summary = useMemo(() => {
-    const premium = displayResults.filter(r => (r.med ?? 0) >= 20);
-    const mid = displayResults.filter(r => (r.med ?? 0) >= 5 && (r.med ?? 0) < 20);
-    const cheap = displayResults.filter(r => (r.med ?? 0) < 5);
-    const totalSold = displayResults.reduce((s, r) => s + (r.soldCount ?? 0), 0);
-    const totalValue = displayResults.reduce((s, r) => s + (r.med ?? 0), 0);
-    const mutOverrides = displayResults.reduce((s, r) => s + getMutationAdvisory(r, gemMode).filter(a => a.needsOverride).length, 0);
+    // Mutation-aware: same effective-price rule as the premium pin
+    const eff = (r: Recommendation) => Math.max(r.med ?? 0, getMaxMutationPrice(r));
+    const premium = exportResults.filter(r => eff(r) >= PREMIUM_THRESHOLD);
+    const mid = exportResults.filter(r => eff(r) >= 5 && eff(r) < PREMIUM_THRESHOLD);
+    const cheap = exportResults.filter(r => eff(r) < 5);
+    const totalSold = exportResults.reduce((s, r) => s + (r.soldCount ?? 0), 0);
+    const totalValue = exportResults.reduce((s, r) => s + (r.med ?? 0), 0);
+    const mutOverrides = exportResults.reduce((s, r) => s + getMutationAdvisory(r, gemMode).filter(a => a.needsOverride).length, 0);
     const tierCounts = { S: 0, A: 0, B: 0, C: 0, D: 0 };
-    displayResults.forEach(r => { if (r.tier in tierCounts) tierCounts[r.tier as keyof typeof tierCounts]++; });
-    return { premium: premium.length, mid: mid.length, cheap: cheap.length, totalSold, totalValue, mutOverrides, tierCounts, total: displayResults.length };
-  }, [displayResults, gemMode]);
+    exportResults.forEach(r => { if (r.tier in tierCounts) tierCounts[r.tier as keyof typeof tierCounts]++; });
+    return { premium: premium.length, mid: mid.length, cheap: cheap.length, totalSold, totalValue, mutOverrides, tierCounts, total: exportResults.length };
+  }, [exportResults, gemMode]);
 
-  /* ─── Generate + download ─── */
-  const generateAndDownload = () => {
+  /* ─── Build whitelist from export list (single source for download, save, preview) ─── */
+  const buildWhitelist = (): WLItem[] => {
     // Priority = sequential index based on sorted order (0 = most important).
     // The list is already sorted: premium items first (by price desc), then strategy sort.
     // Using sequential ensures unique, unambiguous priorities for the bot.
-    const wl: WLItem[] = displayResults.map((r: Recommendation, idx: number) => {
-      if (!r?.name) return null as any;
-      const item: WLItem = { pet_name: r.name, priority: idx, min_value: getMinValue(r) };
-      const advisory = getMutationAdvisory(r, gemMode);
-      const withOverrides = advisory.filter(a => a?.needsOverride);
+    const wl: WLItem[] = [];
+    const seen = new Set<string>();
+    for (const r of exportResults) {
+      if (!r?.name || seen.has(r.name.toLowerCase())) continue;
+      seen.add(r.name.toLowerCase());
+      const item: WLItem = { pet_name: r.name, priority: wl.length, min_value: getMinValue(r) };
+      const withOverrides = getMutationAdvisory(r, gemMode).filter(a => a?.needsOverride);
       if (withOverrides.length > 0) {
         item.mutations = {};
         for (const o of withOverrides) {
           if (o?.mutation && typeof o.recommendedOverride === 'number') item.mutations[o.mutation] = o.recommendedOverride;
         }
       }
-      return item;
-    }).filter((w: WLItem | null) => w !== null);
-    // Append manually added pets (not in recommendations) at the end
-    const existingNames = new Set(wl.map(w => w.pet_name.toLowerCase()));
+      wl.push(item);
+    }
+    // Manually added pets (not in recommendations) go at the end, grab-anything budget
     for (const name of manualPets) {
-      if (!existingNames.has(name.toLowerCase())) {
+      if (!seen.has(name.toLowerCase())) {
+        seen.add(name.toLowerCase());
         wl.push({ pet_name: name, priority: wl.length, min_value: 1000000 });
       }
     }
-    const genConfig: Config = { whitelisted: wl, blacklisted: config.blacklisted, version: '1.0' };
+    return wl;
+  };
+
+  /* ─── Generate + download ─── */
+  const generateAndDownload = () => {
+    const genConfig: Config = { whitelisted: buildWhitelist(), blacklisted: config.blacklisted, version: '1.0' };
     setConfig(genConfig);
     downloadConfigJSON(genConfig, showToast, data.recommendations, gemMode);
   };
 
-  /* ─── Save to DB ─── */
+  /* ─── Save to DB — saves exactly what Download would export ─── */
   const saveConfig = async () => {
     if (isSaving) return;
     setIsSaving(true);
+    const genConfig: Config = { whitelisted: buildWhitelist(), blacklisted: config.blacklisted, version: '1.0' };
+    setConfig(genConfig);
     try {
-      const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ whitelisted: config.whitelisted, blacklisted: config.blacklisted }) });
+      const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ whitelisted: genConfig.whitelisted, blacklisted: genConfig.blacklisted }) });
       const result = await res.json();
       if (res.ok && result.success) showToast(`Saved ${result.whitelisted} items + ${result.blacklisted} blacklisted`);
       else showToast(`Save failed: ${result.error || 'unknown error'}`);
@@ -449,18 +461,21 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
           <div className="d-flex items-center gap-2 flex-wrap">
             <span className="text-xl">{strat?.icon}</span>
             <span className="fw-700 text-lg" style={{ color: strat?.color || 'var(--text)' }}>{strat?.label}</span>
-            <span className="text-sm text-sub">{displayResults.length}/{results.length} items</span>
+            <span className="text-sm text-sub">
+              {exportResults.length + manualPets.length} in config
+              {tableSearch.trim() ? ` · ${displayResults.length} shown` : ''}
+            </span>
           </div>
           <div className="d-flex gap-2 flex-wrap">
-            <button type="button" className="btn-cta" onClick={generateAndDownload} disabled={displayResults.length === 0}>
-              Download Config ({displayResults.length})
+            <button type="button" className="btn-cta" onClick={generateAndDownload} disabled={exportResults.length === 0 && manualPets.length === 0}>
+              Download Config ({exportResults.length + manualPets.length})
             </button>
-            <button type="button" className="btn btn-sm" onClick={saveConfig} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save to DB'}</button>
+            <button type="button" className="btn btn-sm" onClick={saveConfig} disabled={isSaving || (exportResults.length === 0 && manualPets.length === 0)}>{isSaving ? 'Saving...' : 'Save to DB'}</button>
           </div>
         </div>
 
         {/* Summary bar */}
-        {displayResults.length > 0 && (
+        {exportResults.length > 0 && (
           <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: '0.7rem', color: 'var(--text3)', alignItems: 'center' }}>
             <span><strong style={{ color: 'var(--gold)' }}>{summary.tierCounts.S}</strong>S</span>
             <span><strong style={{ color: 'var(--accent)' }}>{summary.tierCounts.A}</strong>A</span>
@@ -662,7 +677,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
         )}
 
         {/* JSON Preview toggle */}
-        {displayResults.length > 0 && (
+        {(exportResults.length > 0 || manualPets.length > 0) && (
           <div style={{ borderTop: '1px solid var(--border)' }}>
             <button type="button" className="btn btn-ghost w-full" onClick={() => setShowPreview(!showPreview)}
               style={{ borderRadius: 0, fontSize: 11, minHeight: 32, justifyContent: 'center', gap: 4 }}>
@@ -673,15 +688,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
                 <pre className="text-mono text-xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text2)', lineHeight: 1.5 }}>
                   {JSON.stringify({
                     blacklisted: config.blacklisted,
-                    whitelisted: displayResults.map((r, idx) => {
-                      const entry: any = { pet_name: r.name, priority: idx, min_value: getMinValue(r) };
-                      const adv = getMutationAdvisory(r, gemMode).filter(a => a.needsOverride);
-                      if (adv.length > 0) {
-                        entry.mutations = {};
-                        for (const a of adv) entry.mutations[a.mutation] = a.recommendedOverride;
-                      }
-                      return entry;
-                    }),
+                    whitelisted: buildWhitelist(),
                     version: '1.0'
                   }, null, 2)}
                 </pre>
