@@ -192,6 +192,7 @@ export function swapStagingToLive(minListingsForSwap: number): {
     if (stagingCount < minListingsForSwap) {
       return { status: 'ABORTED' as const, staging_count: stagingCount, new_live: 0, unique_names: 0, unique_sellers: 0, delisted: 0, new_count: 0 };
     }
+    const liveCount = (db.prepare('SELECT COUNT(*) AS c FROM brainrot_listings').get() as any).c as number;
     const soldAt = nowIso();
 
     // Keep original first_seen_at for offers that persisted across scrapes
@@ -214,15 +215,22 @@ export function swapStagingToLive(minListingsForSwap: number): {
       SELECT 'delisted', name, rarity, mutation, ms, price, quantity, seller, ?
       FROM brainrot_listings
       WHERE offer_id NOT IN (SELECT offer_id FROM brainrot_listings_staging)
+        AND name != 'Other'
     `).run(soldAt);
 
-    // New offers = in staging, missing from live
-    const newCount = db.prepare(`
-      INSERT INTO brainrot_market_changes (change_type, name, rarity, mutation, ms, price, quantity, seller, detected_at)
-      SELECT 'new', name, rarity, mutation, ms, price, quantity, seller, ?
-      FROM brainrot_listings_staging
-      WHERE offer_id NOT IN (SELECT offer_id FROM brainrot_listings)
-    `).run(soldAt).changes;
+    // New offers = in staging, missing from live. Skip entirely on the FIRST
+    // populate (live empty) — flagging the whole market as "new" is noise.
+    // 'Other' (Eldorado's unnamed junk bucket) is excluded from changes too.
+    let newCount = 0;
+    if (liveCount > 0) {
+      newCount = db.prepare(`
+        INSERT INTO brainrot_market_changes (change_type, name, rarity, mutation, ms, price, quantity, seller, detected_at)
+        SELECT 'new', name, rarity, mutation, ms, price, quantity, seller, ?
+        FROM brainrot_listings_staging
+        WHERE offer_id NOT IN (SELECT offer_id FROM brainrot_listings)
+          AND name != 'Other'
+      `).run(soldAt).changes;
+    }
 
     // The swap itself
     db.prepare('DELETE FROM brainrot_listings').run();

@@ -10,7 +10,7 @@ Everything runs on your machine — no accounts, no cloud, no setup.
 2. Run it. The app opens and pulls the live market automatically (~5 min first run).
 3. Data refreshes on launch when older than 12 h, every 6 h while open, or on demand with **⟳ Scrape Now**.
 
-Your data lives in `%APPDATA%/brainrot-market-intelligence/brainrot.db` (SQLite) and survives updates.
+Your data lives in `%APPDATA%/brainrot-dashboard/brainrot.db` (SQLite) and survives updates.
 
 ## Highlights
 

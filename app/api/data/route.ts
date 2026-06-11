@@ -89,6 +89,18 @@ export async function GET(request: Request) {
   (watchlist || []).forEach((w: any) => { wlMap[w.pet_name.toLowerCase()] = w; });
   const blSet: Set<string> = new Set((blacklist || []).map((b: any) => b.pet_name.toLowerCase()));
 
+  // ─── Trending derivation ───
+  // Eldorado's isTrending flag is dead (0 listings carry it as of June 2026).
+  // Derive trending from listing age instead: first_seen_at within 24h =
+  // fresh market activity. Cold-start guard: on a brand-new DB every listing
+  // is "new", which would mark the entire market trending — skip until the
+  // data has history.
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  const isRecent = (l: any) => !!l.first_seen_at && new Date(l.first_seen_at).getTime() >= dayAgo;
+  const recentTotal = allListings.reduce((s, l) => s + (isRecent(l) ? 1 : 0), 0);
+  const coldStart = allListings.length === 0 || recentTotal / allListings.length > 0.5;
+  const isTrendingListing = (l: any) => !!l.is_trending || (!coldStart && isRecent(l));
+
   // ─── Aggregate all data ───
   const brainrots: Record<string, any> = {};
   const sellers: Record<string, SellerStats> = {};
@@ -101,7 +113,7 @@ export async function GET(request: Request) {
     const { name, rarity, mutation, ms, price, quantity, seller, verified } = l;
     if (!name || name === 'Other' || /^\d+$/.test(name) || name.length <= 2) continue;
 
-    if (l.is_trending) trendingCount++;
+    if (isTrendingListing(l)) trendingCount++;
 
     // ─── Brainrot aggregation ───
     if (!brainrots[name]) {
@@ -138,7 +150,7 @@ export async function GET(request: Request) {
     b.mutationSet.add(mutation);
     b.msSet.add(ms);
     if (l.exact_ms != null) b.exactMsValues.push(l.exact_ms);
-    if (l.is_trending) b.trendingListings++;
+    if (isTrendingListing(l)) b.trendingListings++;
     if (l.verified) b.verifiedListings++;
     if (!b.imageUrl && l.image_url) b.imageUrl = l.image_url;
 
@@ -350,9 +362,10 @@ export async function GET(request: Request) {
     }
   }
 
-  // ─── Sold archive summary ───
+  // ─── Sold archive summary ('Other' junk bucket excluded) ───
   const soldByName: Record<string, { count: number; totalValue: number; lastSold: string; avgPrice: number }> = {};
   for (const s of soldArchive || []) {
+    if (!s.name || s.name === 'Other') continue;
     if (!soldByName[s.name]) soldByName[s.name] = { count: 0, totalValue: 0, lastSold: '', avgPrice: 0 };
     soldByName[s.name].count++;
     soldByName[s.name].totalValue += Number(s.price) || 0;
@@ -414,9 +427,9 @@ export async function GET(request: Request) {
       dt: l.delivery_time || '',
     }));
 
-  // ─── Trending items ───
+  // ─── Trending items (derived — see isTrendingListing above) ───
   const trendingItems = allListings
-    .filter(l => l.is_trending && isFinite(l.price))
+    .filter(l => isTrendingListing(l) && l.name && l.name !== 'Other' && isFinite(l.price))
     .sort((a, b) => (b.price || 0) - (a.price || 0))
     .slice(0, 100)
     .map(l => ({
@@ -523,7 +536,7 @@ export async function GET(request: Request) {
       newItems: (marketChanges || []).filter((c: any) => c.change_type === 'new'),
     },
     soldArchive: {
-      recent: (soldArchive || []).slice(0, 500).map((s: any) => ({
+      recent: (soldArchive || []).filter((s: any) => s.name && s.name !== 'Other').slice(0, 500).map((s: any) => ({
         name: s.name, rarity: s.rarity, mutation: s.mutation, ms: s.ms,
         exactMs: s.exact_ms, price: s.price, quantity: s.quantity,
         seller: s.seller, imageUrl: s.image_url,
