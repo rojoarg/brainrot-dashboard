@@ -1,58 +1,63 @@
-# BRAINROT DASHBOARD — PROJECT BRIEF
+# BRAINROT MARKET INTELLIGENCE — PROJECT BRIEF
 
-> Keep this file accurate. If you change strategies, gem tiers, or workflow, update it.
+> Keep this file accurate. If you change architecture, strategies, gem tiers, or workflow, update it.
 
-## PROJECT CONTEXT
+## WHAT IT IS
 
-Roblox pet trading analytics dashboard ("Brainrot Market Intelligence") for the game **Steal a Brainrot**. It scrapes Eldorado.gg marketplace data (~54k listings), analyzes it, and generates auto-joiner configs for sniping underpriced listings.
+**Local desktop app** (like Agency/Neon): Roblox trading analytics for **Steal a Brainrot**. Scrapes the full Eldorado.gg market (~49k listings) into a local SQLite DB, analyzes it, and generates auto-joiner configs for sniping underpriced listings. Anyone can install and run it — no accounts, no cloud, no env vars.
 
-**Stack:** Next.js 16.2.4 (App Router, Turbopack) · TypeScript · Supabase (Postgres) · Vercel · SWR · Recharts
+**Stack:** Next.js 16.2.4 (App Router, standalone output) · TypeScript · **better-sqlite3** (local DB) · Electron + electron-builder (NSIS installer) · SWR · Recharts
 **Repo:** `https://github.com/rojoarg/brainrot-dashboard.git` — branch **`main`** (repo root = this folder)
-**Deploy:** Vercel auto-deploys on push to `main`.
+**History:** was Supabase + Vercel until June 2026; fully migrated to local-first. No Supabase code remains.
 
-## HOW WE WORK
+## RUN / BUILD
 
-1. Repo root is this folder. Push: `git add -A && git commit && git push origin main`.
-2. **Env vars:** `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` (+ `CRON_SECRET` for the scraper) live on Vercel. Locally, copy `.env.local.example` → `.env.local` and fill them in — without them the UI loads but API routes return 503 with a clear message.
-3. **Always run `npx tsc --noEmit` and `npx eslint app lib`** before saying you're done.
-4. Game/market domain knowledge lives in `.claude/skills/brainrot-market/SKILL.md`.
-5. Brand: dark theme default, red+black accents (Rojo Colo), light mode supported. Premium/futuristic feel.
+- `npm run dev` → dashboard at localhost:3000, DB auto-created at `./data/brainrot.db`
+- Hit **Scrape Now** in the header (or `GET /api/scrape`) → full market sweep ~5 min, no secret needed locally
+- `npm run electron` → Electron window against the running dev server
+- `npm run dist:win` → `next build` + `scripts/prepare-standalone.js` + electron-builder → `dist/BrainrotIntel-Setup-<version>.exe`
+- Packaged app: Electron spawns the Next standalone server on a **bundled node.exe** (avoids better-sqlite3 ABI mismatch); DB lives in `%APPDATA%/brainrot-market-intelligence/brainrot.db`; auto-scrapes on launch when data >12h old and every 6h.
+- **Always run `npx tsc --noEmit` and `npx eslint app lib`** before saying you're done.
 
 ## KEY FILES
 
-- `app/components/tabs/ConfigTab.tsx` — strategy picker, filters, config generator (the core feature)
+- `lib/db.ts` — SQLite layer: schema init (8 tables), `swapStagingToLive()` (atomic staging→live swap, sold/delisted detection, first_seen_at preservation, min-rows abort guard)
+- `app/api/scrape/route.ts` — single-pass local scraper (CONCURRENT=5, end-detection: 5 empty pages OR HTTP 4xx — Eldorado caps at page 1000), background run + `?action=status` poll
+- `app/api/data/route.ts` — reads SQLite, computes scores/recommendations (sync queries)
+- `app/api/config/route.ts` — config persistence (watchlist + blacklist, transactional)
+- `app/components/tabs/ConfigTab.tsx` — strategy picker, filters, config generator (core feature)
 - `app/lib/utils.ts` — smartMinValue, computePriority, getMutationAdvisory, buildConfigJSON
-- `app/lib/constants.ts` — RARITY_WEIGHT, MUTATION_MULTIPLIERS (full June-2026 table incl. Gold/Diamond/Bloodrot/Candy/Disco; note Eldorado spells "Yin-Yang" with a hyphen), colors, tier floors
-- `app/api/data/route.ts` — reads Supabase, computes scores/recommendations
-- `app/api/scrape/route.ts` — Eldorado scraper (chunked, self-chaining, CRON_SECRET-protected)
-- `app/api/config/route.ts` — config persistence (watchlist + blacklist tables)
-- `lib/supabase.ts` — client; exports `supabaseConfigured` guard (never throw at module load)
-- `app/page.tsx` — tabs, state, watchlist CRUD · `app/lib/useData.ts` — SWR hook
+- `app/lib/constants.ts` — RARITY_WEIGHT, MUTATION_MULTIPLIERS (full June-2026 table; Eldorado spells "Yin-Yang" with hyphen)
+- `electron/main.js` — shell: free port, spawn server, auto-scrape, single instance
+- `scripts/prepare-standalone.js` — assembles standalone server + static + public + node.exe
+- `app/page.tsx` — tabs, state, Scrape Now button with status polling
+- Game/market domain knowledge: `.claude/skills/brainrot-market/SKILL.md`
 
 ## CONFIG SEMANTICS (the part people get wrong)
 
 Output JSON: `{ blacklisted: string[], whitelisted: [{ pet_name, priority, min_value, mutations? }], version }`.
 
-- `priority`: sequential index of the sorted list (0 = grab first). page.tsx watchlist adds use `computePriority()` instead.
-- `min_value`: minimum **in-game gem value** a spawned pet must have to be grabbed. **INVERTED vs USD:** expensive USD → 1M ("grab any copy"); cheap USD → high gem bar. Must stay monotonic: cheaper USD ⇒ higher gem threshold. $20+ effective price (base median OR best mutation) = premium = always 1M and pinned at the top.
-- `mutations`: per-mutation gem overrides, only emitted when they differ from the base budget and have real price data.
+- `priority`: sequential index of the sorted list (0 = grab first). page.tsx watchlist adds use `computePriority()`.
+- `min_value`: minimum **in-game gem value** a spawned pet must have to be grabbed. **INVERTED vs USD:** expensive USD → 1M ("grab any copy"); cheap USD → high gem bar. Must stay monotonic: cheaper USD ⇒ higher gem threshold. $20+ effective price (base median OR best mutation) = premium = always 1M, pinned on top.
+- `mutations`: per-mutation overrides, only when they differ from base budget and have real price data.
 
 ## STRATEGIES (3)
 
-1. **All-Star** (`default` gem mode) — profit score: price + flip + demand + farm + depth + rarity tiebreak
-2. **Farmer** (`farmer` gem mode, p25 pricing, tight budgets 50M–300M) — farm score + sold volume + listing depth
+1. **All-Star** (`default` gems) — profit score: price + flip + demand + farm + depth + rarity tiebreak
+2. **Farmer** (`farmer` gems, p25 pricing, 50M–300M budgets) — farm score + sold volume + depth
 3. **Trending** (`default`) — trending listings ×5 + sold ×2 + score
 
-Gem tiers (default mode): $20+→1M · $10-20→1B · $5-10→1.5B · <$5→2B. Farmer: $20+→1M · $10-20→50M · $5-10→100M · <$5→300M.
+Gem tiers (default): $20+→1M · $10-20→1B · $5-10→1.5B · <$5→2B. Farmer: $20+→1M · $10-20→50M · $5-10→100M · <$5→300M.
 
-## CURRENT STATE (June 2026)
+## VERIFIED STATE (2026-06-11)
 
-- Eldorado API works, schema unchanged, ~54k listings (~1082 pages; scraper MAX_PAGES=1400 has headroom).
-- Mutation table updated to the full 12-live set + unreleased Disco.
-- ConfigTab: export list = filters + removals + quick filters (table search is view-only); Download / Save to DB / JSON preview all share one `buildWhitelist()`.
+- Full local scrape: 48,770 listings / 275 brainrots / 1,665 sellers in 4m39s; top rec Headless Horseman (OG) $5,669 ✓
+- Eldorado API caps pagination at page 1000 (~50k of its 54k records) — coverage ~90%; remaining tail would need filtered sub-queries (per-rarity) if ever needed.
 
-## OPEN / NEXT
+## OPEN / NEXT (the "100x" roadmap)
 
-- Live Vercel URL unknown from this machine; deployment status unverified.
-- profitScore weights never validated against real trading outcomes.
-- "100x" product overhaul wanted: richer market analytics (price history is collected but barely surfaced), better validation feedback on config generation, sold-velocity signals, alerting.
+1. Surface price history (collected daily per combo — barely shown in UI): trend charts, pump detection.
+2. Config validation feedback: explain WHY each item was included.
+3. Sold-velocity (sold/day) signals once the sold archive accumulates locally.
+4. UI refresh of secondary tabs; installer icon (assets/icon.ico missing — using Electron default).
+5. profitScore weights never validated against real trading outcomes.

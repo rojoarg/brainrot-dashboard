@@ -164,6 +164,56 @@ export default function Dashboard() {
     showToast(`Removed ${name} from watchlist`);
   }, [showToast]);
 
+  /* ─── Scrape trigger (local app — no external cron) ─── */
+  const [isScraping, setIsScraping] = useState(false);
+  const scrapePollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (scrapePollRef.current) clearInterval(scrapePollRef.current); }, []);
+  const latestRun = data?.meta?.scrapeRuns?.[0];
+  // Treat DB-reported 'running' as live only if it started recently (stale runs get failed on next trigger)
+  const dbSaysRunning = latestRun?.status === 'running' && !!latestRun.startedAt
+    && (Date.now() - new Date(latestRun.startedAt).getTime()) < 30 * 60 * 1000;
+  const scrapeRunning = isScraping || dbSaysRunning;
+
+  const watchScrape = useCallback(() => {
+    setIsScraping(true);
+    if (scrapePollRef.current) clearInterval(scrapePollRef.current);
+    scrapePollRef.current = setInterval(async () => {
+      try {
+        const s = await fetch('/api/scrape?action=status').then(r => r.json());
+        const status = s?.run?.status;
+        if (status && status !== 'running') {
+          if (scrapePollRef.current) { clearInterval(scrapePollRef.current); scrapePollRef.current = null; }
+          setIsScraping(false);
+          refresh();
+          showToast(status === 'completed'
+            ? `Scrape done: ${s.run.total_listings?.toLocaleString() || '?'} listings`
+            : 'Scrape failed — try again');
+        }
+      } catch { /* transient poll error — keep waiting */ }
+    }, 5000);
+  }, [refresh, showToast]);
+
+  const triggerScrape = useCallback(async () => {
+    if (scrapeRunning) return;
+    try {
+      const res = await fetch('/api/scrape');
+      const j = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        showToast('Scrape already running');
+        watchScrape();
+        return;
+      }
+      if (!res.ok || !j.success) {
+        showToast(`Scrape failed to start: ${j.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      showToast('Scrape started — full market sweep takes ~5-10 min');
+      watchScrape();
+    } catch {
+      showToast('Could not reach the scraper');
+    }
+  }, [scrapeRunning, watchScrape, showToast]);
+
   /* ─── Navigation helpers ─── */
   const openDetail = useCallback((name: string) => { setSelectedBrainrot(name); setTab('detail'); }, []);
 
@@ -251,6 +301,10 @@ export default function Dashboard() {
             <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme" title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
               {theme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19'}
             </button>
+            <button type="button" className="btn btn-compact" onClick={triggerScrape} disabled={scrapeRunning}
+              title="Fetch fresh market data from Eldorado (~5-10 min)">
+              {scrapeRunning ? 'Scraping…' : '⟳ Scrape Now'}
+            </button>
             <button type="button" className="btn btn-primary btn-export" onClick={() => downloadConfigJSON(config, showToast, recommendations)}>
               Export Config
             </button>
@@ -275,7 +329,7 @@ export default function Dashboard() {
         <div className="banner banner-error">
           <div className="fw-700 text-lg text-red mb-1">No live listings data</div>
           <div className="text-md text-sub">
-            The scraper will repopulate data at the next scheduled run (6am UTC daily). Historical price data, sold archive, and market changes are still available below.
+            Hit <strong>Scrape Now</strong> in the header to pull the full Eldorado market (~5-10 min). Historical price data, sold archive, and market changes are still available below.
             {meta.scrapeRuns && meta.scrapeRuns.length > 0 && (
               <span> Last successful scrape had {meta.scrapeRuns.find(r => r.status === 'completed')?.totalListings?.toLocaleString() || '?'} listings.</span>
             )}

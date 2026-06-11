@@ -1,17 +1,50 @@
 {
   "name": "brainrot-dashboard",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "description": "Brainrot Market Intelligence — local Eldorado.gg market analytics and auto-joiner config generator for Steal a Brainrot",
+  "author": "Rojo Colo",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron": "electron .",
+    "prepare:standalone": "node scripts/prepare-standalone.js",
+    "dist:win": "next build && node scripts/prepare-standalone.js && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.rojocolo.brainrot-intel",
+    "productName": "Brainrot Market Intelligence",
+    "npmRebuild": false,
+    "afterPack": "scripts/after-pack.js",
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "server"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "BrainrotIntel-Setup-${version}.${ext}"
+    }
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.104.0",
     "@types/react-window": "^1.8.8",
     "@vercel/functions": "^3.4.3",
+    "better-sqlite3": "^12.10.0",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -21,9 +54,12 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",

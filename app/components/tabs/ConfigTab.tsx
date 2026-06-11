@@ -307,7 +307,7 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
     if (!data?.meta) return null;
     const runs = data.meta.scrapeRuns || [];
     const lastCompleted = runs.find((r: any) => r.status === 'completed');
-    const lastScrapeAt = lastCompleted?.completed_at || lastCompleted?.started_at || null;
+    const lastScrapeAt = lastCompleted?.completedAt || lastCompleted?.startedAt || null;
     const now = Date.now(); // eslint-disable-line
     const hoursAgo = lastScrapeAt ? Math.floor((now - new Date(lastScrapeAt).getTime()) / 3600000) : null;
     return { total: data.meta.totalListings || 0, unique: data.meta.uniqueBrainrots || 0, hoursAgo, isStale: hoursAgo === null || hoursAgo > 24 };

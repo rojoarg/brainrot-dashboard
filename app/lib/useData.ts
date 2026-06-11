@@ -11,8 +11,7 @@ const fetcher = async (url: string): Promise<DashData> => {
     console.error('Data fetch error:', err);
     throw new Error('Network error loading market data. Check your connection and refresh.');
   }
-  // Read the body even on errors — the API returns clear messages
-  // (e.g. 503 "Supabase is not configured...") that we want to show.
+  // Read the body even on errors — the API returns clear messages we want to show.
   let body: any = null;
   try { body = await res.json(); } catch { /* non-JSON error body */ }
   if (!res.ok || body?.error) {

@@ -20,7 +20,7 @@ export interface Meta {
   scrapedPages: number;
   recordCount?: number;
   uniqueCombos?: number;
-  scrapeRuns?: { status: string; totalListings?: number; completed_at?: string; started_at?: string; pages_scraped?: number; marketplaceTotal?: number }[];
+  scrapeRuns?: { status: string; totalListings?: number; completedAt?: string; startedAt?: string; pagesScraped?: number; marketplaceTotal?: number }[];
 }
 
 export interface BrainrotCombo {

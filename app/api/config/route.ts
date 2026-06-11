@@ -1,40 +1,36 @@
 import { NextResponse } from 'next/server';
-import { supabase, supabaseConfigured, SUPABASE_MISSING_MSG } from '@/lib/supabase';
+import { getDb } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export async function GET() {
-  if (!supabaseConfigured) {
-    return NextResponse.json({ error: SUPABASE_MISSING_MSG }, { status: 503 });
-  }
+function parseMutations(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'string') return undefined;
   try {
-    const [{ data: watchlist, error: wlErr }, { data: blacklist, error: blErr }] = await Promise.all([
-      supabase.from('brainrot_watchlist').select('*').order('priority'),
-      supabase.from('brainrot_blacklist').select('*').order('pet_name'),
-    ]);
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).length > 0) return obj;
+  } catch { /* corrupt JSON — treat as no mutations */ }
+  return undefined;
+}
 
-    if (wlErr || blErr) {
-      console.error('Config GET errors:', wlErr?.message, blErr?.message);
-      return NextResponse.json(
-        { error: 'Failed to fetch config' },
-        { status: 500 }
-      );
-    }
+export async function GET() {
+  try {
+    const db = getDb();
+    const watchlist = db.prepare('SELECT * FROM brainrot_watchlist ORDER BY priority').all() as any[];
+    const blacklist = db.prepare('SELECT * FROM brainrot_blacklist ORDER BY pet_name').all() as any[];
 
     return NextResponse.json({
-      whitelisted: (watchlist || []).map((w: any) => {
+      whitelisted: watchlist.map((w: any) => {
         const item: { pet_name: string; priority: number; min_value: number; mutations?: Record<string, number> } = {
           pet_name: w.pet_name,
           priority: w.priority,
           min_value: Number(w.min_value) || 1000000,
         };
-        if (w.mutations && typeof w.mutations === 'object' && Object.keys(w.mutations).length > 0) {
-          item.mutations = w.mutations;
-        }
+        const muts = parseMutations(w.mutations);
+        if (muts) item.mutations = muts;
         return item;
       }),
-      blacklisted: (blacklist || []).map((b: any) => b.pet_name),
+      blacklisted: blacklist.map((b: any) => b.pet_name),
       version: '1.0',
     });
   } catch (err: any) {
@@ -49,7 +45,7 @@ const MAX_PET_NAME_LENGTH = 100;
 const MAX_MUTATIONS_PER_ITEM = 20;
 const MAX_TOTAL_MUTATIONS = 2000;
 
-// Sanitize pet names: remove control chars, null bytes, trim (defense-in-depth for Supabase parameterized queries)
+// Sanitize pet names: remove control chars, null bytes, trim
 function sanitizePetName(name: string): string {
   const trimmed = name.trim();
   if (trimmed.length === 0) return '';
@@ -57,12 +53,8 @@ function sanitizePetName(name: string): string {
 }
 
 export async function POST(request: Request) {
-  if (!supabaseConfigured) {
-    return NextResponse.json({ success: false, error: SUPABASE_MISSING_MSG }, { status: 503 });
-  }
   try {
     // Auth: only require auth if CONFIG_SECRET is explicitly set.
-    // CRON_SECRET is for the scraper — config saves from the browser should work without it.
     const authHeader = request.headers.get('authorization');
     const configSecret = process.env.CONFIG_SECRET;
     if (configSecret) {
@@ -130,60 +122,43 @@ export async function POST(request: Request) {
     const wlNames = new Set(dedupedWl.map((w: any) => w.pet_name.trim().toLowerCase()));
     const finalBl = dedupedBl.filter((name: string) => !wlNames.has(name.trim().toLowerCase()));
 
-    // Sync watchlist — delete all then re-insert
-    // Note: Supabase JS client doesn't support transactions, but the delete+insert
-    // pattern is acceptable here since this is a user-initiated config save and
-    // partial failure returns an error so the user knows to retry.
-    const { error: delWlErr } = await supabase.from('brainrot_watchlist').delete().neq('id', 0);
-    if (delWlErr) {
-      return NextResponse.json({ success: false, error: 'Failed to clear watchlist' }, { status: 500 });
-    }
-    if (dedupedWl.length > 0) {
-      let globalMutCount = 0;
-      const rows = dedupedWl.map((w: any, i: number) => {
-        const row: { pet_name: string; priority: number; min_value: number; mutations: Record<string, number> } = {
-          pet_name: sanitizePetName(w.pet_name.trim()),
-          priority: typeof w.priority === 'number' && isFinite(w.priority) ? Math.max(0, Math.min(w.priority, 10000)) : i + 1,
-          min_value: typeof w.min_value === 'number' && isFinite(w.min_value) ? Math.max(0, Math.min(w.min_value, 1e12)) : 0,
-          mutations: {},
-        };
-        if (w.mutations && typeof w.mutations === 'object') {
-          let mutCount = 0;
-          for (const [k, v] of Object.entries(w.mutations)) {
-            if (mutCount >= MAX_MUTATIONS_PER_ITEM || globalMutCount >= MAX_TOTAL_MUTATIONS) break;
-            if (typeof k === 'string' && k.length > 0 && k.length <= 100 && typeof v === 'number' && isFinite(v) && v > 0) {
-              row.mutations[k] = Math.min(v, 1e12);
-              mutCount++;
-              globalMutCount++;
-            }
+    // Build sanitized rows before the transaction
+    let globalMutCount = 0;
+    const wlRows = dedupedWl.map((w: any, i: number) => {
+      const muts: Record<string, number> = {};
+      if (w.mutations && typeof w.mutations === 'object') {
+        let mutCount = 0;
+        for (const [k, v] of Object.entries(w.mutations)) {
+          if (mutCount >= MAX_MUTATIONS_PER_ITEM || globalMutCount >= MAX_TOTAL_MUTATIONS) break;
+          if (typeof k === 'string' && k.length > 0 && k.length <= 100 && typeof v === 'number' && isFinite(v) && v > 0) {
+            muts[k] = Math.min(v, 1e12);
+            mutCount++;
+            globalMutCount++;
           }
         }
-        return row;
-      });
-      for (let i = 0; i < rows.length; i += 50) {
-        const { error: insErr } = await supabase.from('brainrot_watchlist').insert(rows.slice(i, i + 50));
-        if (insErr) {
-          return NextResponse.json({ success: false, error: 'Failed to insert watchlist batch', inserted: i }, { status: 500 });
-        }
       }
-    }
+      return {
+        pet_name: sanitizePetName(w.pet_name.trim()),
+        priority: typeof w.priority === 'number' && isFinite(w.priority) ? Math.max(0, Math.min(w.priority, 10000)) : i + 1,
+        min_value: typeof w.min_value === 'number' && isFinite(w.min_value) ? Math.max(0, Math.min(w.min_value, 1e12)) : 0,
+        mutations: Object.keys(muts).length > 0 ? JSON.stringify(muts) : null,
+      };
+    });
+    const blRows = finalBl.map((name: string) => sanitizePetName(name.trim()));
 
-    // Sync blacklist
-    const { error: delBlErr } = await supabase.from('brainrot_blacklist').delete().neq('id', 0);
-    if (delBlErr) {
-      return NextResponse.json({ success: false, error: 'Failed to clear blacklist' }, { status: 500 });
-    }
-    if (finalBl.length > 0) {
-      const rows = finalBl.map((name: string) => ({ pet_name: sanitizePetName(name.trim()) }));
-      for (let i = 0; i < rows.length; i += 50) {
-        const { error: insErr } = await supabase.from('brainrot_blacklist').insert(rows.slice(i, i + 50));
-        if (insErr) {
-          return NextResponse.json({ success: false, error: 'Failed to insert blacklist batch', inserted: i }, { status: 500 });
-        }
-      }
-    }
+    // Atomic replace — SQLite transaction (no partial-failure window like the
+    // old Supabase delete+insert pattern)
+    const db = getDb();
+    const insertWl = db.prepare('INSERT OR REPLACE INTO brainrot_watchlist (pet_name, priority, min_value, mutations) VALUES (?, ?, ?, ?)');
+    const insertBl = db.prepare('INSERT OR REPLACE INTO brainrot_blacklist (pet_name) VALUES (?)');
+    db.transaction(() => {
+      db.prepare('DELETE FROM brainrot_watchlist').run();
+      for (const r of wlRows) insertWl.run(r.pet_name, r.priority, r.min_value, r.mutations);
+      db.prepare('DELETE FROM brainrot_blacklist').run();
+      for (const name of blRows) insertBl.run(name);
+    })();
 
-    return NextResponse.json({ success: true, whitelisted: dedupedWl.length, blacklisted: finalBl.length });
+    return NextResponse.json({ success: true, whitelisted: wlRows.length, blacklisted: blRows.length });
   } catch (err: any) {
     console.error('Config POST error:', err);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });

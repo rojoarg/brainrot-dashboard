@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { supabase, supabaseConfigured, SUPABASE_MISSING_MSG } from '@/lib/supabase';
+import { getDb } from '@/lib/db';
 import { RARITY_WEIGHT, RARITY_SCORE_BONUS, RARITY_TIER_FLOOR } from '../../lib/constants';
 
-export const revalidate = 300;
+export const dynamic = 'force-dynamic';
 
 // ─── Simple in-memory rate limiter ───
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -38,42 +38,17 @@ interface SellerStats {
   disputeRatio: number; warranty: boolean; sellerId: string; joined: string | null;
 }
 
-// ─── Paginated fetch helper ───
-async function fetchAllListings(): Promise<any[]> {
-  const PAGE_SIZE = 1000;
-  const MAX_PAGES = 200; // safety cap: 200K listings max
-  const results: any[] = [];
-  let page = 0;
-  let consecutiveErrors = 0;
-  while (page < MAX_PAGES) {
-    const { data, error } = await supabase
-      .from('brainrot_listings')
-      .select('*')
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
-      .order('id');
-    if (error) {
-      consecutiveErrors++;
-      console.error(`fetchAllListings page ${page} error:`, error.message);
-      if (consecutiveErrors >= 3) {
-        console.error('fetchAllListings: 3 consecutive errors, aborting with partial data');
-        break;
-      }
-      page++;
-      continue;
-    }
-    consecutiveErrors = 0;
-    if (!data || data.length === 0) break;
-    results.push(...data);
-    if (data.length < PAGE_SIZE) break;
-    page++;
-  }
-  return results;
+// ─── Listing normalizer: SQLite stores booleans as 0/1 ───
+function normalizeListing(l: any): any {
+  return {
+    ...l,
+    verified: !!l.verified,
+    is_trending: !!l.is_trending,
+    seller_warranty: !!l.seller_warranty,
+  };
 }
 
 export async function GET(request: Request) {
-  if (!supabaseConfigured) {
-    return NextResponse.json({ error: SUPABASE_MISSING_MSG }, { status: 503 });
-  }
   try {
   // Rate limiting
   const forwarded = request.headers.get('x-forwarded-for');
@@ -87,26 +62,25 @@ export async function GET(request: Request) {
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-  // ─── Parallel fetch all data sources ───
-  const [
-    allListings,
-    { data: watchlist },
-    { data: blacklist },
-    { data: scrapeRuns },
-    { data: priceHistory },
-    { data: marketChanges },
-    { data: soldArchive },
-    { count: totalSoldCount },
-  ] = await Promise.all([
-    fetchAllListings(),
-    supabase.from('brainrot_watchlist').select('*').order('priority'),
-    supabase.from('brainrot_blacklist').select('*'),
-    supabase.from('brainrot_scrape_runs').select('*').order('started_at', { ascending: false }).limit(20),
-    supabase.from('brainrot_price_history').select('*').gte('snapshot_date', thirtyDaysAgo.toISOString().split('T')[0]).order('snapshot_date'),
-    supabase.from('brainrot_market_changes').select('*').gte('detected_at', sevenDaysAgo.toISOString()).order('detected_at', { ascending: false }).limit(2000),
-    supabase.from('brainrot_sold_archive').select('*').gte('sold_at', thirtyDaysAgo.toISOString()).order('sold_at', { ascending: false }).limit(2000),
-    supabase.from('brainrot_sold_archive').select('*', { count: 'exact', head: true }),
-  ]);
+  // ─── Fetch all data sources (local SQLite — synchronous) ───
+  const db = getDb();
+  const allListings = (db.prepare('SELECT * FROM brainrot_listings').all() as any[]).map(normalizeListing);
+  const watchlist = (db.prepare('SELECT * FROM brainrot_watchlist ORDER BY priority').all() as any[]).map((w: any) => {
+    let mutations: Record<string, number> | null = null;
+    if (w.mutations && typeof w.mutations === 'string') {
+      try { mutations = JSON.parse(w.mutations); } catch { mutations = null; }
+    }
+    return { ...w, mutations };
+  });
+  const blacklist = db.prepare('SELECT * FROM brainrot_blacklist').all() as any[];
+  const scrapeRuns = db.prepare('SELECT * FROM brainrot_scrape_runs ORDER BY started_at DESC LIMIT 20').all() as any[];
+  const priceHistory = db.prepare('SELECT * FROM brainrot_price_history WHERE snapshot_date >= ? ORDER BY snapshot_date')
+    .all(thirtyDaysAgo.toISOString().split('T')[0]) as any[];
+  const marketChanges = db.prepare('SELECT * FROM brainrot_market_changes WHERE detected_at >= ? ORDER BY detected_at DESC LIMIT 2000')
+    .all(sevenDaysAgo.toISOString()) as any[];
+  const soldArchive = db.prepare('SELECT * FROM brainrot_sold_archive WHERE sold_at >= ? ORDER BY sold_at DESC LIMIT 2000')
+    .all(thirtyDaysAgo.toISOString()) as any[];
+  const totalSoldCount = (db.prepare('SELECT COUNT(*) AS c FROM brainrot_sold_archive').get() as any).c as number;
 
   const lastRun = scrapeRuns?.find((r: any) => r.status === 'completed');
 

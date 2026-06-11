@@ -1,5 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Standalone server output so the Electron shell can run the app
+  // without node_modules; better-sqlite3 is native and must stay external.
+  output: 'standalone',
+  serverExternalPackages: ['better-sqlite3'],
+  // File tracing sees the process.cwd()/data/brainrot.db reference in lib/db.ts
+  // and would bundle the local dev DB (~80MB) into the installer. Never ship it.
+  outputFileTracingExcludes: { '*': ['./data/**'] },
   async headers() {
     return [
       {
