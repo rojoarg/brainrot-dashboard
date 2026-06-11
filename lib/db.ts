@@ -94,6 +94,14 @@ function initSchema(db: Database.Database) {
       pet_name TEXT NOT NULL UNIQUE
     );
 
+    -- Scrape blacklist: brainrots the user never wants scraped or shown
+    -- anywhere in the app (different from brainrot_blacklist, which only
+    -- excludes pets from generated configs).
+    CREATE TABLE IF NOT EXISTS brainrot_scrape_blacklist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pet_name TEXT NOT NULL UNIQUE COLLATE NOCASE
+    );
+
     CREATE TABLE IF NOT EXISTS brainrot_scrape_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       status TEXT NOT NULL DEFAULT 'running',
@@ -195,6 +203,12 @@ export function swapStagingToLive(minListingsForSwap: number): {
     const liveCount = (db.prepare('SELECT COUNT(*) AS c FROM brainrot_listings').get() as any).c as number;
     const soldAt = nowIso();
 
+    // Change detection only makes sense between two comparable full scrapes.
+    // Skip it when live is empty (first populate) OR much smaller than
+    // staging (bootstrap preview swap mid-first-scrape) — otherwise the
+    // whole market gets flagged "new"/"delisted" as noise.
+    const detectChanges = liveCount >= stagingCount * 0.5;
+
     // Keep original first_seen_at for offers that persisted across scrapes
     db.prepare(`
       UPDATE brainrot_listings_staging SET first_seen_at = COALESCE(
@@ -203,26 +217,25 @@ export function swapStagingToLive(minListingsForSwap: number): {
       )`).run();
 
     // Delisted = in live, missing from staging → archive as sold + market change
-    const delisted = db.prepare(`
-      INSERT INTO brainrot_sold_archive (offer_id, name, rarity, mutation, ms, exact_ms, price, quantity, seller, image_url, first_seen_at, sold_at)
-      SELECT offer_id, name, rarity, mutation, ms, exact_ms, price, quantity, seller, image_url, first_seen_at, ?
-      FROM brainrot_listings
-      WHERE offer_id NOT IN (SELECT offer_id FROM brainrot_listings_staging)
-    `).run(soldAt).changes;
-
-    db.prepare(`
-      INSERT INTO brainrot_market_changes (change_type, name, rarity, mutation, ms, price, quantity, seller, detected_at)
-      SELECT 'delisted', name, rarity, mutation, ms, price, quantity, seller, ?
-      FROM brainrot_listings
-      WHERE offer_id NOT IN (SELECT offer_id FROM brainrot_listings_staging)
-        AND name != 'Other'
-    `).run(soldAt);
-
-    // New offers = in staging, missing from live. Skip entirely on the FIRST
-    // populate (live empty) — flagging the whole market as "new" is noise.
-    // 'Other' (Eldorado's unnamed junk bucket) is excluded from changes too.
+    let delisted = 0;
     let newCount = 0;
-    if (liveCount > 0) {
+    if (detectChanges) {
+      delisted = db.prepare(`
+        INSERT INTO brainrot_sold_archive (offer_id, name, rarity, mutation, ms, exact_ms, price, quantity, seller, image_url, first_seen_at, sold_at)
+        SELECT offer_id, name, rarity, mutation, ms, exact_ms, price, quantity, seller, image_url, first_seen_at, ?
+        FROM brainrot_listings
+        WHERE offer_id NOT IN (SELECT offer_id FROM brainrot_listings_staging)
+      `).run(soldAt).changes;
+
+      db.prepare(`
+        INSERT INTO brainrot_market_changes (change_type, name, rarity, mutation, ms, price, quantity, seller, detected_at)
+        SELECT 'delisted', name, rarity, mutation, ms, price, quantity, seller, ?
+        FROM brainrot_listings
+        WHERE offer_id NOT IN (SELECT offer_id FROM brainrot_listings_staging)
+          AND name != 'Other'
+      `).run(soldAt);
+
+      // New offers = in staging, missing from live ('Other' junk excluded)
       newCount = db.prepare(`
         INSERT INTO brainrot_market_changes (change_type, name, rarity, mutation, ms, price, quantity, seller, detected_at)
         SELECT 'new', name, rarity, mutation, ms, price, quantity, seller, ?

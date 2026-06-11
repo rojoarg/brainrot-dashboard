@@ -63,8 +63,13 @@ export async function GET(request: Request) {
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
   // ─── Fetch all data sources (local SQLite — synchronous) ───
+  // Scrape-blacklisted names are excluded everywhere (belt and suspenders:
+  // the scraper already skips them, but mid-flight scrapes may have staged
+  // rows from before the name was blacklisted).
   const db = getDb();
-  const allListings = (db.prepare('SELECT * FROM brainrot_listings').all() as any[]).map(normalizeListing);
+  const allListings = (db.prepare(
+    'SELECT * FROM brainrot_listings WHERE lower(name) NOT IN (SELECT lower(pet_name) FROM brainrot_scrape_blacklist)'
+  ).all() as any[]).map(normalizeListing);
   const watchlist = (db.prepare('SELECT * FROM brainrot_watchlist ORDER BY priority').all() as any[]).map((w: any) => {
     let mutations: Record<string, number> | null = null;
     if (w.mutations && typeof w.mutations === 'string') {
@@ -78,8 +83,9 @@ export async function GET(request: Request) {
     .all(thirtyDaysAgo.toISOString().split('T')[0]) as any[];
   const marketChanges = db.prepare('SELECT * FROM brainrot_market_changes WHERE detected_at >= ? ORDER BY detected_at DESC LIMIT 2000')
     .all(sevenDaysAgo.toISOString()) as any[];
-  const soldArchive = db.prepare('SELECT * FROM brainrot_sold_archive WHERE sold_at >= ? ORDER BY sold_at DESC LIMIT 2000')
-    .all(thirtyDaysAgo.toISOString()) as any[];
+  const soldArchive = db.prepare(
+    'SELECT * FROM brainrot_sold_archive WHERE sold_at >= ? AND lower(name) NOT IN (SELECT lower(pet_name) FROM brainrot_scrape_blacklist) ORDER BY sold_at DESC LIMIT 2000'
+  ).all(thirtyDaysAgo.toISOString()) as any[];
   const totalSoldCount = (db.prepare('SELECT COUNT(*) AS c FROM brainrot_sold_archive').get() as any).c as number;
 
   const lastRun = scrapeRuns?.find((r: any) => r.status === 'completed');

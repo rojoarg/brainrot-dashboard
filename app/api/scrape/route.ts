@@ -183,8 +183,21 @@ function toDbRow(l: Listing) {
 
 /* ─── Background runner ─── */
 
+// First ~40 pages cover the most valuable listings — swap them live early on
+// fresh installs so the user sees data in ~1 min instead of an empty app.
+const BOOTSTRAP_PAGES = 40;
+const BOOTSTRAP_MIN_ROWS = 500;
+
 async function runFullScrape(runId: number): Promise<void> {
   const db = getDb();
+  // Scrape blacklist: skip these names entirely (case-insensitive)
+  const scrapeBlacklist = new Set(
+    (db.prepare('SELECT pet_name FROM brainrot_scrape_blacklist').all() as any[])
+      .map(r => String(r.pet_name).toLowerCase()),
+  );
+  const filterBlacklisted = (ls: Listing[]) =>
+    scrapeBlacklist.size === 0 ? ls : ls.filter(l => !scrapeBlacklist.has(l.name.toLowerCase()));
+
   const insertStmt = db.prepare(STAGING_INSERT_SQL);
   const insertBatch = db.transaction((rows: ReturnType<typeof toDbRow>[]) => {
     for (const r of rows) insertStmt.run(r);
@@ -202,6 +215,8 @@ async function runFullScrape(runId: number): Promise<void> {
     let pagesFailed = 0;
     let consecutiveEmpty = 0;
     let reachedEnd = false;
+    // Bootstrap preview only when the app has no data at all (fresh install)
+    let bootstrapDone = ((db.prepare('SELECT COUNT(*) AS c FROM brainrot_listings').get() as any).c as number) > 0;
 
     while (page <= MAX_PAGES && !reachedEnd) {
       const batch = Array.from({ length: Math.min(CONCURRENT, MAX_PAGES - page + 1) }, (_, i) => page + i);
@@ -216,7 +231,7 @@ async function runFullScrape(runId: number): Promise<void> {
         } else {
           consecutiveEmpty = 0;
           pagesScraped++;
-          insertBatch(r.map(toDbRow));
+          insertBatch(filterBlacklisted(r).map(toDbRow));
         }
       }
       page += batch.length;
@@ -226,6 +241,20 @@ async function runFullScrape(runId: number): Promise<void> {
         const stagingCount = (db.prepare('SELECT COUNT(*) AS c FROM brainrot_listings_staging').get() as any).c;
         updateProgress.run(pagesScraped, pagesScraped, pagesFailed, stagingCount, runId);
       }
+
+      // Early preview swap on fresh installs: put the first ~40 pages (the
+      // highest-value listings) live so the dashboard renders within ~1 min.
+      // The full scrape keeps going and swaps the complete market at the end.
+      if (!bootstrapDone && page > BOOTSTRAP_PAGES) {
+        bootstrapDone = true;
+        try {
+          const boot = swapStagingToLive(BOOTSTRAP_MIN_ROWS);
+          console.log(`Bootstrap preview swap: ${boot.status} — ${boot.new_live} listings live for first paint`);
+        } catch (bootErr) {
+          console.error('Bootstrap preview swap failed (continuing full scrape):', bootErr);
+        }
+      }
+
       if (!reachedEnd) await new Promise(r => setTimeout(r, 300));
     }
 
@@ -253,14 +282,14 @@ async function runFullScrape(runId: number): Promise<void> {
         if (name === 'Other') continue; // Eldorado's misc bucket — discarded by the dashboard anyway
         const first = await fetchSearchPage(name, 1);
         if (!first) continue;
-        if (first.listings.length > 0) insertBatch(first.listings.map(toDbRow));
+        if (first.listings.length > 0) insertBatch(filterBlacklisted(first.listings).map(toDbRow));
         if (first.recordCount > c && first.recordCount > first.listings.length) {
           // 200-page ceiling (10k listings/name) — top names run ~3.5k today
           const lastPage = Math.min(Math.ceil(first.recordCount / 50), 200);
           for (let p = 2; p <= lastPage; p++) {
             const more = await fetchSearchPage(name, p);
             if (!more || more.listings.length === 0) break;
-            insertBatch(more.listings.map(toDbRow));
+            insertBatch(filterBlacklisted(more.listings).map(toDbRow));
             topUpPages++;
             await new Promise(r => setTimeout(r, 200));
           }

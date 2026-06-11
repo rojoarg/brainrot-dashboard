@@ -4,6 +4,8 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { TabErrorBoundary } from './components/ErrorBoundary';
 import { DashboardSkeleton } from './components/ui';
+import FirstSyncOverlay from './components/FirstSyncOverlay';
+import BlacklistModal from './components/BlacklistModal';
 import type { DashData, Config, TabId } from './lib/types';
 import { TABS } from './lib/constants';
 import { timeAgo, downloadConfigJSON, exportData, smartMinValue, getMutationAdvisory, computePriority } from './lib/utils';
@@ -28,6 +30,7 @@ export default function Dashboard() {
   const { data, error: loadError, isLoading, refresh } = useData();
 
   const [tab, setTab] = useState<TabId>('overview');
+  const [showBlacklist, setShowBlacklist] = useState(false);
   const [selectedBrainrot, setSelectedBrainrot] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('score');
@@ -171,6 +174,7 @@ export default function Dashboard() {
   const scrapeRunning = isScraping;
 
   const wasScrapingRef = React.useRef(false);
+  const pollTickRef = React.useRef(0);
   const watchScrape = useCallback(() => {
     if (scrapePollRef.current) clearInterval(scrapePollRef.current);
     const poll = async () => {
@@ -180,6 +184,10 @@ export default function Dashboard() {
         if (status === 'running') {
           wasScrapingRef.current = true;
           setIsScraping(true);
+          // Refresh dashboard data every ~20s mid-scrape so the bootstrap
+          // preview (and growing numbers) appear without user action
+          pollTickRef.current++;
+          if (pollTickRef.current % 4 === 0) refresh();
         } else if (status) {
           if (scrapePollRef.current) { clearInterval(scrapePollRef.current); scrapePollRef.current = null; }
           setIsScraping(false);
@@ -326,6 +334,10 @@ export default function Dashboard() {
               title="Fetch fresh market data from Eldorado (~5-10 min)">
               {scrapeRunning ? 'Scraping…' : '⟳ Scrape Now'}
             </button>
+            <button type="button" className="btn btn-compact" onClick={() => setShowBlacklist(true)}
+              title="Brainrots skipped when scraping and hidden from the app">
+              🚫 Blacklist
+            </button>
             <button type="button" className="btn btn-primary btn-export" onClick={() => downloadConfigJSON(config, showToast, recommendations)}>
               Export Config
             </button>
@@ -345,8 +357,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Empty state banner */}
-      {isEmpty && (
+      {/* Empty state: full sync screen while the first scrape runs, banner otherwise */}
+      {isEmpty && scrapeRunning && <FirstSyncOverlay />}
+      {isEmpty && !scrapeRunning && (
         <div className="banner banner-error">
           <div className="fw-700 text-lg text-red mb-1">No live listings data</div>
           <div className="text-md text-sub">
@@ -371,7 +384,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Tab navigation */}
+      {/* Tab navigation (hidden during first sync) */}
+      {!(isEmpty && scrapeRunning) && (
       <div className="tab-nav-wrap mb-4" ref={tabNavRef}>
         <div className="tab-nav" role="tablist" aria-label="Dashboard sections">
           {TABS.map(t => (
@@ -385,8 +399,10 @@ export default function Dashboard() {
           ))}
         </div>
       </div>
+      )}
 
-      {/* Tab content */}
+      {/* Tab content (hidden during first sync) */}
+      {!(isEmpty && scrapeRunning) && (
       <div className="animate-fade-in" key={tab} role="tabpanel" aria-label={TABS.find(t => t.id === tab)?.label}>
         <TabErrorBoundary key={`eb-${tab}`}>
           {tab === 'overview' && <OverviewTab data={data} openDetail={openDetail} />}
@@ -403,6 +419,17 @@ export default function Dashboard() {
           {tab === 'raw' && <RawTab data={data} />}
         </TabErrorBoundary>
       </div>
+      )}
+
+      {/* Scrape blacklist manager */}
+      {showBlacklist && (
+        <BlacklistModal
+          onClose={() => setShowBlacklist(false)}
+          showToast={showToast}
+          onChanged={() => refresh()}
+          suggestions={Object.keys(data.brainrots || {}).sort()}
+        />
+      )}
 
       {/* Floating config shortcut */}
       {tab !== 'config' && config.whitelisted.length > 0 && (
