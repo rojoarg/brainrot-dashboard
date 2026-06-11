@@ -8,7 +8,7 @@ import FirstSyncOverlay from './components/FirstSyncOverlay';
 import BlacklistModal from './components/BlacklistModal';
 import type { Config, TabId } from './lib/types';
 import { TABS } from './lib/constants';
-import { timeAgo, downloadConfigJSON, exportData, smartMinValue, getMutationAdvisory, computePriority } from './lib/utils';
+import { timeAgo, downloadConfigJSON, exportData, smartMinValue, buildMutationOverrides, computePriority } from './lib/utils';
 import { useData } from './lib/useData';
 
 /* ─── Lazy-loaded tab components ─── */
@@ -56,8 +56,10 @@ export default function Dashboard() {
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [loadedAgoText, setLoadedAgoText] = useState('');
   useEffect(() => {
-    if (data && !loadedAt) setLoadedAt(Date.now()); // eslint-disable-line
-  }, [data, loadedAt]);
+    // Reset on every successful (re)validation — SWR refreshes every 5 min,
+    // so pinning to first load would claim the data is older than it is.
+    if (data) setLoadedAt(Date.now()); // eslint-disable-line
+  }, [data]);
   useEffect(() => {
     if (!loadedAt) return;
     const update = () => {
@@ -108,7 +110,8 @@ export default function Dashboard() {
   /* ─── Keyboard shortcuts ─── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Don't intercept when typing in inputs
+      // Inert while a modal owns the keyboard, and when typing in inputs
+      if (showBlacklist) return;
       const t = e.target as HTMLElement;
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return;
 
@@ -134,13 +137,12 @@ export default function Dashboard() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [tab, prevTab, refresh]);
+  }, [tab, prevTab, refresh, showBlacklist]);
 
   /* ─── Watchlist helpers ─── */
   const isOnWL = useCallback((name: string) => config.whitelisted.some(w => w.pet_name.toLowerCase() === name.toLowerCase()), [config]);
 
-  const addToWL = useCallback((name: string) => {
-    if (isOnWL(name)) return;
+  const buildWLItem = useCallback((name: string) => {
     const rec = data?.recommendations.find(r => r.name.toLowerCase() === name.toLowerCase());
     const b = data?.brainrots?.[name];
     const newItem: { pet_name: string; priority: number; min_value: number; mutations?: Record<string, number> } = {
@@ -149,26 +151,47 @@ export default function Dashboard() {
       min_value: smartMinValue(rec || b),
     };
     if (rec) {
-      const advisory = getMutationAdvisory(rec);
-      const overrides = advisory.filter(a => a.needsOverride);
-      if (overrides.length > 0) {
-        newItem.mutations = {};
-        for (const o of overrides) {
-          newItem.mutations[o.mutation] = o.recommendedOverride;
-        }
-      }
+      const muts = buildMutationOverrides(rec);
+      if (muts) newItem.mutations = muts;
     }
-    setConfig(c => ({
-      ...c,
-      whitelisted: [...c.whitelisted, newItem],
-    }));
+    return newItem;
+  }, [data]);
+
+  const addToWL = useCallback((name: string) => {
+    if (isOnWL(name)) return;
+    const newItem = buildWLItem(name);
+    setConfig(c => ({ ...c, whitelisted: [...c.whitelisted, newItem] }));
     showToast(`Added ${name} to watchlist`);
-  }, [data, isOnWL, showToast]);
+  }, [isOnWL, buildWLItem, showToast]);
+
+  const addManyToWL = useCallback((names: string[]) => {
+    const fresh = names.filter(n => !isOnWL(n));
+    if (fresh.length === 0) { showToast('All of those are already on the watchlist'); return; }
+    const items = fresh.map(buildWLItem);
+    setConfig(c => ({ ...c, whitelisted: [...c.whitelisted, ...items] }));
+    showToast(`Added ${items.length} item${items.length === 1 ? '' : 's'} to watchlist`);
+  }, [isOnWL, buildWLItem, showToast]);
 
   const removeFromWL = useCallback((name: string) => {
     setConfig(c => ({ ...c, whitelisted: c.whitelisted.filter(w => w.pet_name.toLowerCase() !== name.toLowerCase()) }));
     showToast(`Removed ${name} from watchlist`);
   }, [showToast]);
+
+  /* ─── Watchlist persistence ───
+     Config changes used to live only in React state — every "+ WL" was lost
+     on restart unless the user happened to press Save in the Config tab.
+     Auto-save with a debounce; skipped until the initial config has loaded. */
+  useEffect(() => {
+    if (!configLoadedRef.current) return;
+    const t = setTimeout(() => {
+      fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ whitelisted: config.whitelisted, blacklisted: config.blacklisted }),
+      }).catch(() => { /* offline/transient — next change retries */ });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [config]);
 
   /* ─── Scrape trigger (local app — no external cron) ─── */
   const [isScraping, setIsScraping] = useState(false);
@@ -351,7 +374,14 @@ export default function Dashboard() {
               Export Config
             </button>
             <button type="button" className="btn btn-compact" onClick={() => exportData(recommendations.map(r => ({ name: r.name, tier: r.tier, score: r.score, rarity: r.rarity, median: r.med, min: r.min, max: r.max, roi: r.roiPct, sold: r.soldCount, listings: r.listings })), 'recommendations', 'csv')}>Recs CSV</button>
-            <button type="button" className="btn btn-compact" onClick={() => exportData(data, 'full-data', 'json')}>Export All</button>
+            <button type="button" className="btn btn-compact" onClick={async () => {
+              // Pull the full dataset incl. raw listings (omitted from the
+              // lightweight poll payload) for a complete export.
+              try {
+                const full = await fetch('/api/data?include=raw').then(r => r.json());
+                exportData(full, 'full-data', 'json');
+              } catch { exportData(data, 'full-data', 'json'); }
+            }}>Export All</button>
           </div>
         </div>
         <div className="header-stats">
@@ -424,8 +454,8 @@ export default function Dashboard() {
               <DetailTab data={data} selected={selectedBrainrot} setSelected={setSelectedBrainrot} isOnWL={isOnWL} addToWL={addToWL} removeFromWL={removeFromWL} />
             </>
           )}
-          {tab === 'recs' && <RecsTab data={data} search={search} setSearch={setSearch} openDetail={openDetail} isOnWL={isOnWL} addToWL={addToWL} removeFromWL={removeFromWL} />}
-          {tab === 'watchlist' && <WatchlistTab data={data} config={config} openDetail={openDetail} removeFromWL={removeFromWL} />}
+          {tab === 'recs' && <RecsTab data={data} search={search} setSearch={setSearch} openDetail={openDetail} isOnWL={isOnWL} addToWL={addToWL} addManyToWL={addManyToWL} removeFromWL={removeFromWL} />}
+          {tab === 'watchlist' && <WatchlistTab data={data} config={config} openDetail={openDetail} removeFromWL={removeFromWL} showToast={showToast} />}
           {tab === 'sellers' && <SellersTab data={data} />}
           {tab === 'sold' && <SoldTab data={data} openDetail={openDetail} />}
           {tab === 'trending' && <TrendingTab data={data} openDetail={openDetail} />}
@@ -454,7 +484,7 @@ export default function Dashboard() {
 
       {/* Footer: version + disclaimer */}
       <footer className="d-flex justify-between items-center flex-wrap gap-2 mt-4" style={{ padding: '14px 4px 8px', borderTop: '1px solid var(--border)', fontSize: '0.68rem', color: 'var(--text3)' }}>
-        <span>Brainrot Market Intelligence v1.1 · data refreshes automatically from Eldorado.gg</span>
+        <span>Brainrot Market Intelligence v1.2 · data refreshes automatically from Eldorado.gg</span>
         <span>Unofficial fan tool — not affiliated with Roblox, Steal a Brainrot, or Eldorado.gg. Prices are public marketplace data; use at your own risk.</span>
       </footer>
 

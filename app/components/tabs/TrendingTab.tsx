@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import type { DashData, TrendingItem } from '../../lib/types';
 import { fmtPrice } from '../../lib/utils';
-import { SearchInput, FilterBar, ImageThumb, RarityBadge } from '../ui';
+import { SearchInput, FilterBar, ImageThumb, RarityBadge, keyActivate } from '../ui';
 
 interface TrendingTabProps {
   data: DashData;
@@ -33,17 +33,17 @@ function TrendingTab({ data, openDetail }: TrendingTabProps) {
             {filtered.length === 0 && (
               <tr><td colSpan={9} className="text-center text-muted p-4">No trending listings{search ? ' match your search' : ' right now'}</td></tr>
             )}
-            {filtered.map((t: TrendingItem) => (
-              <tr key={`${t.name}-${t.offer_id}`} onClick={() => openDetail(t.name)} className="clickable" role="row">
-                <td><ImageThumb src={t.image_url} size={24} /></td>
+            {filtered.map((t: TrendingItem, i: number) => (
+              <tr key={`trend-${t.name}-${t.seller}-${t.price}-${i}`} onClick={() => openDetail(t.name)} {...keyActivate(() => openDetail(t.name), `View ${t.name} details`)} className="clickable" role="row">
+                <td><ImageThumb src={t.imageUrl} size={24} alt={t.name} /></td>
                 <td className="fw-600">{t.name}</td>
                 <td><RarityBadge rarity={t.rarity} /></td>
                 <td className={t.mutation !== 'None' ? 'color-cyan' : 'color-muted'}>{t.mutation}</td>
                 <td>{t.ms}</td>
-                <td className="text-mono text-sub">{'-'}</td>
+                <td className="text-mono text-sub">{t.exactMs != null ? t.exactMs.toLocaleString() : '-'}</td>
                 <td className="text-mono fw-600">{fmtPrice(t.price)}</td>
                 <td>{t.seller}</td>
-                <td>{t.verified ? <span className="text-green">✓</span> : '-'}</td>
+                <td>{t.verified ? <span className="color-green" aria-label="Verified seller">✓</span> : '-'}</td>
               </tr>
             ))}
           </tbody>

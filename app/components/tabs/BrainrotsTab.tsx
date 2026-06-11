@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import type { DashData, Brainrot } from '../../lib/types';
 import { raritySort, fmt, fmtPrice, getRarityWeight } from '../../lib/utils';
-import { SearchInput, FilterBar, RarityBadge, ImageThumb, WLButton } from '../ui';
+import { SearchInput, FilterBar, RarityBadge, ImageThumb, WLButton, keyActivate } from '../ui';
 
 interface BrainrotsTabProps {
   data: DashData;
@@ -69,7 +69,7 @@ function BrainrotsTab({
     <div className="animate-fade-in">
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search brainrots..." maxWidth={260} />
-        <select className="select" value={rarityFilter} onChange={e => setRarityFilter(e.target.value)}>
+        <select className="select" value={rarityFilter} onChange={e => setRarityFilter(e.target.value)} aria-label="Filter by rarity">
           <option value="all">All Rarities</option>
           {rarities.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
@@ -97,12 +97,12 @@ function BrainrotsTab({
               <tr><td colSpan={11} className="text-center text-muted p-4">No brainrots{search ? ' match your search' : rarityFilter !== 'all' ? ` with rarity "${rarityFilter}"` : ' found'}</td></tr>
             )}
             {entries.slice(0, showCount).map(b => (
-              <tr key={`brainrot-${b.name}`} onClick={() => openDetail(b.name)} className="clickable" role="row">
+              <tr key={`brainrot-${b.name}`} onClick={() => openDetail(b.name)} {...keyActivate(() => openDetail(b.name), `View ${b.name} details`)} className="clickable" role="row">
                 <td>
                   <ImageThumb src={b.imageUrl} size={24} />
                 </td>
                 <td className="fw-600">
-                  {b.name} {b.trendingListings > 0 && <span className="text-orange text-xs">🔥</span>}
+                  {b.name} {b.trendingListings > 0 && <span className="text-orange text-xs" aria-hidden="true">🔥</span>}
                 </td>
                 <td>
                   <RarityBadge rarity={b.rarity} />

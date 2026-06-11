@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import type { DashData, Config, WLItem, MutationAdvisory, Recommendation, Brainrot } from '../../lib/types';
 import { fmtPrice, fmtMinValue, getMutationAdvisory, downloadConfigJSON } from '../../lib/utils';
 import { MUTATION_COLORS } from '../../lib/constants';
-import { TierBadge, RarityBadge, ImageThumb, SearchInput } from '../ui';
+import { TierBadge, RarityBadge, ImageThumb, SearchInput, keyActivate } from '../ui';
 
 // fmtPrice is used in the render below
 
@@ -13,9 +13,10 @@ interface WatchlistTabProps {
   config: Config;
   openDetail: (name: string) => void;
   removeFromWL: (name: string) => void;
+  showToast: (msg: string) => void;
 }
 
-export default React.memo(function WatchlistTab({ data, config, openDetail, removeFromWL }: WatchlistTabProps) {
+export default React.memo(function WatchlistTab({ data, config, openDetail, removeFromWL, showToast }: WatchlistTabProps) {
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   type WLItemEnriched = WLItem & {
@@ -56,7 +57,7 @@ export default React.memo(function WatchlistTab({ data, config, openDetail, remo
             </span>
           )}
         </div>
-        <button type="button" className="btn btn-primary fw-700 text-md" onClick={() => downloadConfigJSON(config, () => {}, data.recommendations)}>Export Config JSON</button>
+        <button type="button" className="btn btn-primary fw-700 text-md" onClick={() => downloadConfigJSON(config, showToast, data.recommendations)}>Export Config</button>
       </div>
       <div className="glass-card table-wrap max-h-75">
 
@@ -77,7 +78,7 @@ export default React.memo(function WatchlistTab({ data, config, openDetail, remo
               const isExpanded = expandedItem === item.pet_name;
               return (
                 <React.Fragment key={item.pet_name}>
-                  <tr onClick={() => openDetail(item.brainrotName)} className="clickable">
+                  <tr onClick={() => openDetail(item.brainrotName)} {...keyActivate(() => openDetail(item.brainrotName), `View ${item.brainrotName} details`)} className="clickable">
                     <td><ImageThumb src={item.brainrot?.imageUrl || item.rec?.imageUrl} size={24} /></td>
                     <td className="fw-700 text-gold">#{item.priority}</td>
                     <td className="fw-600">{item.brainrotName}</td>

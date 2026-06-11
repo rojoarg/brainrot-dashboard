@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import type { DashData, SoldItem, MarketChange } from '../../lib/types';
 import { fmtPrice, timeAgo } from '../../lib/utils';
-import { RarityBadge, ImageThumb, SearchInput, FilterBar } from '../ui';
+import { RarityBadge, ImageThumb, SearchInput, FilterBar, keyActivate } from '../ui';
 
 interface SoldTabProps {
   data: DashData;
@@ -48,10 +48,10 @@ export default React.memo(function SoldTab({ data, openDetail }: SoldTabProps) {
     <div className="animate-fade-in">
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search sold/delisted..." maxWidth={220} />
-        <div className="tab-nav d-flex">
-          <button type="button" className={`tab-btn ${view === 'sold' ? 'active' : ''}`} onClick={() => setView('sold')}>Sold ({soldArchive?.totalAllTime ?? 0})</button>
-          <button type="button" className={`tab-btn ${view === 'delisted' ? 'active' : ''}`} onClick={() => setView('delisted')}>Delisted ({marketChanges?.delisted?.length ?? 0})</button>
-          <button type="button" className={`tab-btn ${view === 'new' ? 'active' : ''}`} onClick={() => setView('new')}>New ({marketChanges?.newItems?.length ?? 0})</button>
+        <div className="tab-nav d-flex" role="group" aria-label="Sold / delisted / new view">
+          <button type="button" aria-pressed={view === 'sold'} className={`tab-btn ${view === 'sold' ? 'active' : ''}`} onClick={() => setView('sold')}>Sold ({soldArchive?.recent?.length ?? 0})</button>
+          <button type="button" aria-pressed={view === 'delisted'} className={`tab-btn ${view === 'delisted' ? 'active' : ''}`} onClick={() => setView('delisted')}>Delisted ({marketChanges?.delisted?.length ?? 0})</button>
+          <button type="button" aria-pressed={view === 'new'} className={`tab-btn ${view === 'new' ? 'active' : ''}`} onClick={() => setView('new')}>New ({marketChanges?.newItems?.length ?? 0})</button>
         </div>
       </FilterBar>
 
@@ -64,16 +64,20 @@ export default React.memo(function SoldTab({ data, openDetail }: SoldTabProps) {
           {/* Summary by name */}
           <div className="glass-card p-4 mb-4">
             <h3 className="section-heading">Most Sold Brainrots (30d)</h3>
-            <div className="grid-strategies">
-              {soldByNameArr.slice(0, 24).map(s => (
-                <div key={s.name} onClick={() => openDetail(s.name)} className="config-item cursor-pointer">
-                  <div className="flex-1">
-                    <div className="text-md fw-600">{s.name}</div>
-                    <div className="text-sm text-sub">{s.count} sold · avg {fmtPrice(s.avgPrice)}</div>
+            {soldByNameArr.length === 0 ? (
+              <div className="empty-state">No sold or delisted items{search ? ' match your search' : ' in the last 30 days yet'}.</div>
+            ) : (
+              <div className="grid-strategies">
+                {soldByNameArr.slice(0, 24).map(s => (
+                  <div key={s.name} role="button" onClick={() => openDetail(s.name)} {...keyActivate(() => openDetail(s.name), `View ${s.name} details`)} className="config-item cursor-pointer">
+                    <div className="flex-1">
+                      <div className="text-md fw-600">{s.name}</div>
+                      <div className="text-sm text-sub">{s.count} sold · avg {fmtPrice(s.avgPrice)}</div>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Recent sold table */}
@@ -84,8 +88,11 @@ export default React.memo(function SoldTab({ data, openDetail }: SoldTabProps) {
                 <th className="w-28"></th><th>Name</th><th>Rarity</th><th>Mutation</th><th>M/s</th><th>Price</th><th>Qty</th><th>Seller</th><th>Sold</th>
               </tr></thead>
               <tbody role="rowgroup">
+                {filteredRecent.length === 0 && (
+                  <tr><td colSpan={9} className="text-center text-muted p-4">No recent sold listings{search ? ' match your search' : ''}.</td></tr>
+                )}
                 {filteredRecent.slice(0, 300).map((s: SoldItem, i: number) => (
-                  <tr key={`${s.offer_id}-${i}`} onClick={() => openDetail(s.name)} className="clickable" role="row">
+                  <tr key={`${s.offer_id}-${i}`} onClick={() => openDetail(s.name)} {...keyActivate(() => openDetail(s.name), `View ${s.name} details`)} className="clickable" role="row">
                     <td><ImageThumb src={s.imageUrl} size={24} /></td>
                     <td className="fw-600">{s.name}</td>
                     <td><RarityBadge rarity={s.rarity} /></td>
@@ -110,8 +117,11 @@ export default React.memo(function SoldTab({ data, openDetail }: SoldTabProps) {
               <th>Name</th><th>Rarity</th><th>Mutation</th><th>M/s</th><th>Price</th><th>Qty</th><th>Seller</th><th>Detected</th>
             </tr></thead>
             <tbody role="rowgroup">
+              {(view === 'delisted' ? filteredDelisted : filteredNew).length === 0 && (
+                <tr><td colSpan={8} className="text-center text-muted p-4">{view === 'delisted' ? 'Nothing delisted' : 'No new listings'}{search ? ' match your search' : ' in the last 7 days'}.</td></tr>
+              )}
               {(view === 'delisted' ? filteredDelisted : filteredNew).slice(0, 500).map((c: MarketChange, i: number) => (
-                <tr key={`${c.name}-${c.detected_at}-${i}`} onClick={() => openDetail(c.name)} className="clickable" role="row">
+                <tr key={`${c.name}-${c.detected_at}-${i}`} onClick={() => openDetail(c.name)} {...keyActivate(() => openDetail(c.name), `View ${c.name} details`)} className="clickable" role="row">
                   <td className="fw-600">{c.name}</td>
                   <td>{c.rarity && <RarityBadge rarity={c.rarity} />}</td>
                   <td className={c.mutation && c.mutation !== 'None' ? 'color-cyan' : 'color-muted'}>{c.mutation}</td>

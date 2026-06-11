@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { Config, DashData, Recommendation, WLItem } from '../../lib/types';
-import { fmtPrice, fmtMinValue, smartMinValue, getMutationAdvisory, getRarityWeight, getMaxMutationPrice, getMutationSummary, parseConfigImport, formatConfigExport, downloadJSONFile, EXPORT_PRESETS, DEFAULT_EXPORT_FORMAT, type ExportFormat, type GemMode } from '../../lib/utils';
+import { fmtPrice, fmtMinValue, smartMinValue, getMutationAdvisory, getRarityWeight, getMaxMutationPrice, getMutationSummary, buildMutationOverrides, parseConfigImport, formatConfigExport, downloadJSONFile, EXPORT_PRESETS, DEFAULT_EXPORT_FORMAT, type ExportFormat, type GemMode } from '../../lib/utils';
 import { RarityBadge, TierBadge, ImageThumb } from '../ui';
 
 interface ConfigTabProps {
@@ -227,13 +227,8 @@ function ConfigTab({ data, config, setConfig, showToast }: ConfigTabProps) {
       if (!r?.name || seen.has(r.name.toLowerCase())) continue;
       seen.add(r.name.toLowerCase());
       const item: WLItem = { pet_name: r.name, priority: wl.length, min_value: getMinValue(r) };
-      const withOverrides = getMutationAdvisory(r, gemMode).filter(a => a?.needsOverride);
-      if (withOverrides.length > 0) {
-        item.mutations = {};
-        for (const o of withOverrides) {
-          if (o?.mutation && typeof o.recommendedOverride === 'number') item.mutations[o.mutation] = o.recommendedOverride;
-        }
-      }
+      const muts = buildMutationOverrides(r, gemMode);
+      if (muts) item.mutations = muts;
       wl.push(item);
     }
     // Manually added pets (not in recommendations) go at the end, grab-anything budget

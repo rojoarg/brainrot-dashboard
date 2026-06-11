@@ -209,6 +209,15 @@ async function runFullScrape(runId: number): Promise<void> {
     "UPDATE brainrot_scrape_runs SET status = 'failed', completed_at = ? WHERE id = ?"
   ).run(nowIso(), runId);
 
+  // Supersession guard: if a newer run was started (e.g. our run was deemed
+  // stale after >30 min and a second trigger took over), this run must stop
+  // before it writes to staging or swaps — otherwise two scrapers race on the
+  // same staging table. Returns true when THIS run is still the active one.
+  const stillActive = () => {
+    const row = db.prepare("SELECT id FROM brainrot_scrape_runs WHERE status = 'running' ORDER BY started_at DESC, id DESC LIMIT 1").get() as any;
+    return row && row.id === runId;
+  };
+
   try {
     let page = 1;
     let pagesScraped = 0;
@@ -219,6 +228,7 @@ async function runFullScrape(runId: number): Promise<void> {
     let bootstrapDone = ((db.prepare('SELECT COUNT(*) AS c FROM brainrot_listings').get() as any).c as number) > 0;
 
     while (page <= MAX_PAGES && !reachedEnd) {
+      if (!stillActive()) { console.warn(`Scrape ${runId} superseded by a newer run — aborting base sweep.`); return; }
       const batch = Array.from({ length: Math.min(CONCURRENT, MAX_PAGES - page + 1) }, (_, i) => page + i);
       const results = await Promise.all(batch.map(p => fetchPage(p)));
       for (const r of results) {
@@ -279,6 +289,7 @@ async function runFullScrape(runId: number): Promise<void> {
       console.log(`Coverage top-up: staged ${stagedTotal()} of ~${marketTotal} — checking ${names.length} names via search`);
       let topUpPages = 0;
       for (const { name, c } of names) {
+        if (!stillActive()) { console.warn(`Scrape ${runId} superseded — aborting top-up.`); return; }
         if (name === 'Other') continue; // Eldorado's misc bucket — discarded by the dashboard anyway
         const first = await fetchSearchPage(name, 1);
         if (!first) continue;
@@ -302,6 +313,8 @@ async function runFullScrape(runId: number): Promise<void> {
     }
 
     // ─── Finalize: atomic swap + snapshots + cleanup ───
+    // Last supersession check before the irreversible swap.
+    if (!stillActive()) { console.warn(`Scrape ${runId} superseded — skipping final swap.`); return; }
     const swap = swapStagingToLive(MIN_LISTINGS_FOR_SWAP);
     if (swap.status === 'ABORTED') {
       console.error(`Scrape ${runId}: swap ABORTED — staging only had ${swap.staging_count} rows (< ${MIN_LISTINGS_FOR_SWAP}). Live data untouched.`);
@@ -390,6 +403,15 @@ async function runFullScrape(runId: number): Promise<void> {
     const twoWeeksAgo = new Date();
     twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
     db.prepare('DELETE FROM brainrot_market_changes WHERE detected_at < ?').run(twoWeeksAgo.toISOString());
+
+    // Retention: the dashboard only ever reads the last 30 days, but the sold
+    // archive (thousands/scrape) and price history (5-15k rows/day) would grow
+    // unbounded. Keep 90 days of each so the local DB doesn't balloon over time.
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const ninetyIso = ninetyDaysAgo.toISOString();
+    db.prepare('DELETE FROM brainrot_sold_archive WHERE sold_at < ?').run(ninetyIso);
+    db.prepare('DELETE FROM brainrot_price_history WHERE snapshot_date < ?').run(ninetyIso.split('T')[0]);
 
     console.log(`Scrape ${runId} completed: ${swap.new_live} listings, ${swap.unique_names} brainrots, ${swap.delisted} delisted, ${snapshotCount} snapshots`);
   } catch (err: any) {

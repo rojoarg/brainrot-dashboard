@@ -1,7 +1,7 @@
 import type { Config, WLItem, MutationAdvisory, Recommendation } from './types';
 import { RARITY_ORDER, RARITY_WEIGHT, MUTATION_MULTIPLIERS } from './constants';
 
-/* ─── Rarity Helpers (shared by ConfigTab + UserDashTab) ─── */
+/* ─── Rarity Helpers ─── */
 export const getRarityWeight = (r: string) => RARITY_WEIGHT[r] ?? 7;
 
 /**
@@ -87,25 +87,6 @@ export function computePriority(rec: { rarity?: string; score?: number; soldCoun
   const rarityComponent = rarityW; // 0-10 direct, not multiplied
   const priority = Math.round(priceComponent + scoreComponent + soldComponent + rarityComponent);
   return Math.max(0, Math.min(100, priority));
-}
-
-/**
- * Master sort: price tier → rarity (tiebreaker) → strategy-specific sort.
- * Higher-value items float to the top. Rarity only matters between items
- * in the same price range — a $50 Legendary beats a $1 Secret.
- */
-export function masterSort(a: Recommendation, b: Recommendation, stratSort: (a: Recommendation, b: Recommendation) => number): number {
-  // Price tier: group into tiers so $500 items always beat $20 items
-  const priceTier = (med: number) => med >= 500 ? 0 : med >= 100 ? 1 : med >= 20 ? 2 : med >= 5 ? 3 : 4;
-  const pa = priceTier(a.med ?? 0);
-  const pb = priceTier(b.med ?? 0);
-  if (pa !== pb) return pa - pb;
-  // Within same price tier, rarity is a tiebreaker
-  const ra = getRarityWeight(a.rarity);
-  const rb = getRarityWeight(b.rarity);
-  if (ra !== rb) return ra - rb;
-  // Then strategy sort
-  return stratSort(a, b);
 }
 
 /* ─── Formatters ─── */
@@ -464,49 +445,73 @@ export function downloadJSONFile(obj: unknown, filename: string, toast?: (msg: s
 }
 
 /* ─── Config Helpers ─── */
-export const buildConfigJSON = (config: Config, recommendations?: Recommendation[], gemMode: GemMode = 'default') => ({
-  blacklisted: config.blacklisted || [],
-  whitelisted: config.whitelisted.map((w: WLItem, i: number) => {
-    const base: { pet_name: string; priority: number; min_value: number; mutations?: Record<string, number> } = {
-      pet_name: w.pet_name,
-      priority: w.priority ?? i,
-      min_value: w.min_value || 1000000,
-    };
-    // Include mutations: either from the WLItem itself or computed from recommendations.
-    // ALL mutations with listings get individual gem budgets — mutations are
-    // fundamentally different items that can be worth wildly different amounts.
-    if (w.mutations && Object.keys(w.mutations).length > 0) {
-      base.mutations = w.mutations;
-    } else if (recommendations) {
-      const rec = recommendations.find(r => r.name.toLowerCase() === w.pet_name.toLowerCase());
-      if (rec) {
-        const advisory = getMutationAdvisory(rec, gemMode);
-        const withOverrides = advisory.filter(a => a.needsOverride);
-        if (withOverrides.length > 0) {
-          base.mutations = {};
-          for (const o of withOverrides) {
-            base.mutations[o.mutation] = o.recommendedOverride;
-          }
-        }
+
+/**
+ * Builds the per-mutation gem-budget override map for a recommendation.
+ * Shared by ConfigTab, page.tsx watchlist adds, and config enrichment so the
+ * three paths can't drift apart.
+ */
+export function buildMutationOverrides(rec: Recommendation | null | undefined, gemMode: GemMode = 'default'): Record<string, number> | undefined {
+  if (!rec) return undefined;
+  const withOverrides = getMutationAdvisory(rec, gemMode).filter(a => a.needsOverride);
+  if (withOverrides.length === 0) return undefined;
+  const muts: Record<string, number> = {};
+  for (const o of withOverrides) {
+    if (o?.mutation && typeof o.recommendedOverride === 'number') muts[o.mutation] = o.recommendedOverride;
+  }
+  return Object.keys(muts).length > 0 ? muts : undefined;
+}
+
+/**
+ * Returns a copy of the config with every whitelist item's mutations filled
+ * in from recommendations (when the item doesn't already carry its own).
+ */
+function enrichConfig(config: Config, recommendations?: Recommendation[], gemMode: GemMode = 'default'): Config {
+  return {
+    blacklisted: config.blacklisted || [],
+    version: '1.0',
+    whitelisted: (config.whitelisted || []).map((w: WLItem, i: number) => {
+      const item: WLItem = { pet_name: w.pet_name, priority: w.priority ?? i, min_value: w.min_value || 1000000 };
+      if (w.mutations && Object.keys(w.mutations).length > 0) {
+        item.mutations = w.mutations;
+      } else if (recommendations) {
+        const rec = recommendations.find(r => r.name.toLowerCase() === w.pet_name.toLowerCase());
+        const muts = buildMutationOverrides(rec, gemMode);
+        if (muts) item.mutations = muts;
       }
+      return item;
+    }),
+  };
+}
+
+/** Reads the user's saved export format from localStorage (presets + custom). */
+export function getSavedExportFormat(): ExportFormat {
+  if (typeof window === 'undefined') return DEFAULT_EXPORT_FORMAT;
+  try {
+    const id = window.localStorage?.getItem('brainrot-export-format-id') || 'standard';
+    if (id === 'custom') {
+      const saved = window.localStorage?.getItem('brainrot-export-format-custom');
+      if (saved) return { ...DEFAULT_EXPORT_FORMAT, ...JSON.parse(saved), id: 'custom', label: 'Custom' };
+      return { ...DEFAULT_EXPORT_FORMAT, id: 'custom', label: 'Custom' };
     }
-    return base;
-  }),
-  version: '1.0',
-});
+    return EXPORT_PRESETS.find(p => p.id === id) || DEFAULT_EXPORT_FORMAT;
+  } catch {
+    return DEFAULT_EXPORT_FORMAT;
+  }
+}
 
+/**
+ * Header / Watchlist "Export Config" — enriches mutations, then honors the
+ * user's saved export format (previously these two buttons always emitted the
+ * hardcoded snake_case shape regardless of the picker in the Config tab).
+ */
 export const downloadConfigJSON = (config: Config, toast?: (msg: string) => void, recommendations?: Recommendation[], gemMode: GemMode = 'default') => {
-  const exportObj = buildConfigJSON(config, recommendations, gemMode);
-  const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `brainrot-config-${new Date().toISOString().split('T')[0]}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-
-  const mutCount = exportObj.whitelisted.filter(w => w.mutations && Object.keys(w.mutations).length > 0).length;
-  if (toast) toast(`Exported ${exportObj.whitelisted.length} items` + (mutCount > 0 ? ` (${mutCount} with mutation overrides)` : ''));
+  const enriched = enrichConfig(config, recommendations, gemMode);
+  const fmt = getSavedExportFormat();
+  const exportObj = formatConfigExport(enriched, fmt);
+  downloadJSONFile(exportObj, `brainrot-config-${new Date().toISOString().split('T')[0]}.json`, undefined);
+  const mutCount = enriched.whitelisted.filter(w => w.mutations && Object.keys(w.mutations).length > 0).length;
+  if (toast) toast(`Exported ${enriched.whitelisted.length} items (${fmt.label})` + (fmt.includeMutations && mutCount > 0 ? ` · ${mutCount} with mutation overrides` : ''));
 };
 
 export function exportData(data: unknown, filename: string, type: 'json' | 'csv' = 'json') {

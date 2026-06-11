@@ -179,18 +179,20 @@ export async function GET(request: Request) {
     c.totalPrice += price;
     c.prices.push(price);
     if (l.exact_ms != null) c.exactMsValues.push(l.exact_ms);
+    // Keep the 8 cheapest sellers per combo, sorted ascending. Sort once the
+    // array first fills so the last element is always the true max (the old
+    // code compared against the last-inserted element before any sort, which
+    // skipped/evicted the wrong sellers until the first replacement).
+    const sellerEntry = {
+      name: seller, price, verified, qty: quantity,
+      rating: l.seller_rating, feedback: l.seller_feedback_count,
+      deliveryTime: l.delivery_time,
+    };
     if (c.sellers.length < 8) {
-      c.sellers.push({
-        name: seller, price, verified, qty: quantity,
-        rating: l.seller_rating, feedback: l.seller_feedback_count,
-        deliveryTime: l.delivery_time,
-      });
-    } else if (price < c.sellers[c.sellers.length - 1].price) {
-      c.sellers[c.sellers.length - 1] = {
-        name: seller, price, verified, qty: quantity,
-        rating: l.seller_rating, feedback: l.seller_feedback_count,
-        deliveryTime: l.delivery_time,
-      };
+      c.sellers.push(sellerEntry);
+      if (c.sellers.length === 8) c.sellers.sort((a: any, b: any) => a.price - b.price);
+    } else if (price < c.sellers[7].price) {
+      c.sellers[7] = sellerEntry;
       c.sellers.sort((a: any, b: any) => a.price - b.price);
     }
 
@@ -306,7 +308,7 @@ export async function GET(request: Request) {
       if (isNaN(s.avgPrice) || !isFinite(s.avgPrice)) s.avgPrice = 0;
       if (s.uniquePets) {
         s.uniquePetCount = s.uniquePets.size;
-        s.petNames = Array.from(s.uniquePets).slice(0, 50);
+        // petNames was never read by the UI — dropped to shrink the payload
         delete s.uniquePets;
       }
     }
@@ -419,7 +421,11 @@ export async function GET(request: Request) {
   }
 
   // ─── Raw listings (ALL, compact format) ───
-  const rawAll = allListings
+  // The single heaviest block (~8k rows) and consumed by NOTHING in the UI
+  // except the "Export All" button — so it's only built/sent when explicitly
+  // requested via ?include=raw, keeping the 5-min SWR poll lightweight.
+  const includeRaw = new URL(request.url).searchParams.get('include') === 'raw';
+  const rawAll = includeRaw ? allListings
     .filter(l => l.name && l.price > 0 && isFinite(l.price))
     .sort((a, b) => (b.price || 0) - (a.price || 0))
     .slice(0, 8000)
@@ -431,7 +437,7 @@ export async function GET(request: Request) {
       t: l.is_trending || false,
       sr: isFinite(l.seller_rating) ? Math.round(l.seller_rating * 10) / 10 : 0,
       dt: l.delivery_time || '',
-    }));
+    })) : [];
 
   // ─── Trending items (derived — see isTrendingListing above) ───
   const trendingItems = allListings
@@ -490,7 +496,8 @@ export async function GET(request: Request) {
     return result;
   };
 
-  const sanitizedRarityStats = sanitizeStats(rarityStats);
+  // rarityStats itself is never read by the UI (only the derived rarityDist
+  // is) — kept internal, not serialized.
   const sanitizedMutationStats = sanitizeStats(mutationStats);
   const sanitizedMsStats = sanitizeStats(msStats);
 
@@ -526,7 +533,6 @@ export async function GET(request: Request) {
       })),
     },
     brainrots,
-    rarityStats: sanitizedRarityStats,
     rarityDist,
     mutationDist,
     priceBuckets,
@@ -702,7 +708,8 @@ function buildRecommendations(brainrots: Record<string, any>, wlMap: Record<stri
         med: isFinite(c.medianPrice) ? c.medianPrice : 0,
         n: c.count || 0,
         qty: c.totalQty || 0,
-        sellers: (c.sellers || []).slice(0, 8),
+        // sellers intentionally omitted here — ConfigTab/utils read only
+        // med/mut/n from bestCombos; DetailTab gets sellers from brainrots[].
         exactMsMin: c.exactMsMin, exactMsMax: c.exactMsMax,
       }))
       .sort((a: any, z: any) => {

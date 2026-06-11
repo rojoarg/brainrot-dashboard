@@ -261,25 +261,27 @@ function OverviewTab({ data, openDetail }: OverviewTabProps) {
         <div className="table-wrap">
           <table className="dash-table" role="table">
             <thead><tr role="row">
-              <th>Time</th><th>Status</th><th>Listings</th><th>Brainrots</th><th>Sellers</th><th>Pages</th><th>Failed</th>
-              <th>Delisted</th><th>New</th><th>Trending</th><th>Avg Price</th>
+              <th>Time</th><th>Status</th><th>Listings</th><th>Brainrots</th><th>Sellers</th><th>Delisted</th><th>New</th><th>Coverage</th>
             </tr></thead>
             <tbody role="rowgroup">
-              {(meta.scrapeRuns || []).map((r: { status: string; totalListings?: number; completed_at?: string; started_at?: string; pages_scraped?: number }, i: number) => (
-                <tr key={`scrape-${r.completed_at}-${i}`} role="row">
-                  <td>{r.completed_at ? timeAgo(r.completed_at) : '...'}</td>
-                  <td><span className={`scrape-status scrape-status--${r.status}`}>{r.status}</span></td>
-                  <td>{r.totalListings?.toLocaleString() || '-'}</td>
-                  <td>{'-'}</td>
-                  <td>{'-'}</td>
-                  <td>{r.pages_scraped || '-'}</td>
-                  <td className="text-muted">0</td>
-                  <td>{'-'}</td>
-                  <td>{'-'}</td>
-                  <td>{'-'}</td>
-                  <td>{'-'}</td>
-                </tr>
-              ))}
+              {(meta.scrapeRuns || []).length === 0 && (
+                <tr><td colSpan={8} className="text-center text-muted p-4">No scrapes yet — hit “Scrape Now” to pull the market.</td></tr>
+              )}
+              {(meta.scrapeRuns || []).map((r, i: number) => {
+                const cov = r.marketplaceTotal && r.totalListings ? Math.round((r.totalListings / r.marketplaceTotal) * 100) : null;
+                return (
+                  <tr key={`scrape-${r.startedAt ?? i}`} role="row">
+                    <td>{r.completedAt ? timeAgo(r.completedAt) : r.startedAt ? `${timeAgo(r.startedAt)} (running)` : '...'}</td>
+                    <td><span className={`scrape-status scrape-status--${r.status}`}>{r.status}</span></td>
+                    <td>{r.totalListings?.toLocaleString() || '-'}</td>
+                    <td>{r.totalBrainrots ?? '-'}</td>
+                    <td>{r.totalSellers?.toLocaleString() ?? '-'}</td>
+                    <td className={r.delistedCount ? 'color-red' : 'text-muted'}>{r.delistedCount ?? '-'}</td>
+                    <td className={r.newCount ? 'color-green' : 'text-muted'}>{r.newCount ?? '-'}</td>
+                    <td className="text-mono">{cov != null ? `${cov}%` : '-'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -20,7 +20,7 @@ export interface Meta {
   scrapedPages: number;
   recordCount?: number;
   uniqueCombos?: number;
-  scrapeRuns?: { status: string; totalListings?: number; completedAt?: string; startedAt?: string; pagesScraped?: number; marketplaceTotal?: number }[];
+  scrapeRuns?: { status: string; totalListings?: number; totalBrainrots?: number; totalSellers?: number; delistedCount?: number; newCount?: number; completedAt?: string; startedAt?: string; pagesScraped?: number; marketplaceTotal?: number }[];
 }
 
 export interface BrainrotCombo {
@@ -196,14 +196,8 @@ export interface MarketChange {
   seller?: string;
 }
 
-export interface RarityStats {
-  count: number;
-  totalQty: number;
-  minPrice: number;
-  maxPrice: number;
-  avgPrice: number;
-}
 
+// Shape emitted by /api/data trending block (camelCase, listing-level)
 export interface TrendingItem {
   name: string;
   rarity: string;
@@ -212,8 +206,8 @@ export interface TrendingItem {
   price: number;
   seller: string;
   verified: boolean;
-  image_url: string;
-  offer_id: string;
+  imageUrl: string;
+  exactMs: number | null;
 }
 
 export interface RawListing {
@@ -233,7 +227,6 @@ export interface RawListing {
 export interface DashData {
   meta: Meta;
   brainrots: Record<string, Brainrot>;
-  rarityStats: Record<string, RarityStats>;
   rarityDist: { name: string; count: number; color: string }[];
   mutationDist: { name: string; count: number; color: string }[];
   priceBuckets: { range: string; count: number }[];

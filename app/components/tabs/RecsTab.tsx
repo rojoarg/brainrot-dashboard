@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import type { DashData, Recommendation } from '../../lib/types';
 import { fmtPrice, raritySort } from '../../lib/utils';
 import { RARITY_WEIGHT } from '../../lib/constants';
-import { StatCard, TierBadge, RarityBadge, WLButton, ImageThumb, SearchInput, FilterBar } from '../ui';
+import { StatCard, TierBadge, RarityBadge, WLButton, ImageThumb, SearchInput, FilterBar, keyActivate } from '../ui';
 
 // Rarity-first tiebreaker: within similar primary sort values, rarer items come first
 const rarityTiebreak = (a: Recommendation, b: Recommendation) =>
@@ -17,10 +17,11 @@ interface RecsTabProps {
   openDetail: (name: string) => void;
   isOnWL: (name: string) => boolean;
   addToWL: (name: string) => void;
+  addManyToWL: (names: string[]) => void;
   removeFromWL: (name: string) => void;
 }
 
-export default React.memo(function RecsTab({ data, search, setSearch, openDetail, isOnWL, addToWL, removeFromWL }: RecsTabProps) {
+export default React.memo(function RecsTab({ data, search, setSearch, openDetail, isOnWL, addToWL, addManyToWL, removeFromWL }: RecsTabProps) {
   const [tierFilter, setTierFilter] = useState('all');
   const [rarityFilter, setRarityFilter] = useState('all');
   const [sortBy, setSortBy] = useState('score');
@@ -53,8 +54,9 @@ export default React.memo(function RecsTab({ data, search, setSearch, openDetail
     return s;
   }, [recs]);
 
+  // Batched: one state update + one summary toast instead of N overlapping toasts
   const addAllTier = (tier: string) => {
-    recs.filter((r: Recommendation) => r.tier === tier && !isOnWL(r.name)).forEach((r: Recommendation) => addToWL(r.name));
+    addManyToWL(recs.filter((r: Recommendation) => r.tier === tier).map((r: Recommendation) => r.name));
   };
 
   return (
@@ -72,15 +74,15 @@ export default React.memo(function RecsTab({ data, search, setSearch, openDetail
       {/* Filters */}
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Search..." maxWidth={220} />
-        <select className="select" value={tierFilter} onChange={e => setTierFilter(e.target.value)}>
+        <select className="select" value={tierFilter} onChange={e => setTierFilter(e.target.value)} aria-label="Filter by tier">
           <option value="all">All Tiers</option>
           {['S', 'A', 'B', 'C', 'D'].map(t => <option key={t} value={t}>{t}-Tier</option>)}
         </select>
-        <select className="select" value={rarityFilter} onChange={e => setRarityFilter(e.target.value)}>
+        <select className="select" value={rarityFilter} onChange={e => setRarityFilter(e.target.value)} aria-label="Filter by rarity">
           <option value="all">All Rarities</option>
           {rarities.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
-        <select className="select" value={sortBy} onChange={e => setSortBy(e.target.value)}>
+        <select className="select" value={sortBy} onChange={e => setSortBy(e.target.value)} aria-label="Sort by">
           <option value="score">Sort: Score</option>
           <option value="roi">Sort: ROI %</option>
           <option value="sold">Sort: Most Sold</option>
@@ -107,7 +109,7 @@ export default React.memo(function RecsTab({ data, search, setSearch, openDetail
               <tr><td colSpan={15} className="text-center text-muted p-4">No recommendations match your filters</td></tr>
             )}
             {recs.slice(0, showCount).map((r: Recommendation) => (
-              <tr key={`rec-${r.name}`} onClick={() => openDetail(r.name)} className="clickable" role="row">
+              <tr key={`rec-${r.name}`} onClick={() => openDetail(r.name)} {...keyActivate(() => openDetail(r.name), `View ${r.name} details`)} className="clickable" role="row">
                 <td><ImageThumb src={r.imageUrl} size={24} /></td>
                 <td><TierBadge tier={r.tier} /></td>
                 <td className="fw-600">{r.name}</td>

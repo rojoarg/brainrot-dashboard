@@ -4,6 +4,22 @@ import React from 'react';
 import Image from 'next/image';
 import { RARITY_COLORS, TIER_CLS } from '../lib/constants';
 
+/* ─── Keyboard-activatable row/card helper ───
+   Spread onto any element with an onClick that navigates (table rows, cards)
+   so keyboard users can reach the same destination with Enter or Space. */
+export function keyActivate(onActivate: () => void, label?: string) {
+  return {
+    tabIndex: 0,
+    ...(label ? { 'aria-label': label } : {}),
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onActivate();
+      }
+    },
+  };
+}
+
 /* ─── Stat Card — Animated value with gradient depth ─── */
 export const StatCard = React.memo(function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
   return (

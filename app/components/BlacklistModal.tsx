@@ -29,11 +29,39 @@ export default function BlacklistModal({ onClose, showToast, onChanged, suggesti
     return () => { alive = false; };
   }, [showToast]);
 
-  // Esc closes
+  // Esc closes (capture + stopPropagation so page-level shortcuts — tab
+  // arrows, 'r' refresh, Detail's Esc-to-back — never fire behind the modal).
+  // Focus management: trap Tab inside the dialog, restore the trigger's
+  // focus on close.
+  const dialogRef = React.useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'r' || e.key === '/') {
+        // Keep global page shortcuts inert while the dialog is open
+        e.stopPropagation();
+      }
+    };
+    // Capture phase: runs before the page-level window listener
+    window.addEventListener('keydown', handler, true);
+    return () => {
+      window.removeEventListener('keydown', handler, true);
+      previouslyFocused?.focus?.();
+    };
   }, [onClose]);
 
   const act = async (action: 'add' | 'remove', rawName: string) => {
@@ -71,9 +99,9 @@ export default function BlacklistModal({ onClose, showToast, onChanged, suggesti
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(2px)' }}
+      style={{ position: 'fixed', inset: 0, background: 'var(--overlay)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(2px)' }}
       onClick={onClose} role="dialog" aria-modal="true" aria-label="Scrape blacklist">
-      <div className="glass-card animate-fade-in" style={{ width: 'min(500px, 92vw)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: 20 }}
+      <div ref={dialogRef} className="glass-card animate-fade-in" style={{ width: 'min(500px, 92vw)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: 'var(--sp-5)' }}
         onClick={e => e.stopPropagation()}>
         <div className="d-flex justify-between items-center mb-1">
           <h2 className="text-lg fw-700" style={{ color: 'var(--red)' }}>🚫 Scrape Blacklist</h2>

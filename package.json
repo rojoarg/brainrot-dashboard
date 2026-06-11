@@ -1,14 +1,14 @@
 {
   "name": "brainrot-dashboard",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Brainrot Market Intelligence — local Eldorado.gg market analytics and auto-joiner config generator for Steal a Brainrot",
   "author": "Rojo Colo",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "lint": "eslint",
     "electron": "electron .",
     "prepare:standalone": "node scripts/prepare-standalone.js",
@@ -45,13 +45,10 @@
     }
   },
   "dependencies": {
-    "@types/react-window": "^1.8.8",
-    "@vercel/functions": "^3.4.3",
     "better-sqlite3": "^12.10.0",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "react-window": "^2.2.7",
     "recharts": "^3.8.1",
     "swr": "^2.4.1"
   },

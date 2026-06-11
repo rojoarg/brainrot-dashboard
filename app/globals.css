@@ -20,8 +20,8 @@
   --border-hover: rgba(255,255,255,0.12);
   --border-accent: rgba(239, 68, 68, 0.2);
   --text: #f0f0f5;
-  --text2: #a0a0b4;
-  --text3: #6b6b82;
+  --text2: #a8a8bd;
+  --text3: #8a8aa0; /* raised from #6b6b82 → ~5.0:1 on --bg for WCAG AA small text */
   --accent: #ef4444;
   --accent2: #f87171;
   --accent-bright: #ff6b6b;
@@ -93,8 +93,8 @@
   --border-hover: rgba(0,0,0,0.13);
   --border-accent: rgba(220, 38, 38, 0.15);
   --text: #16161d;
-  --text2: #52526a;
-  --text3: #9898ae;
+  --text2: #4a4a60;
+  --text3: #6f6f88; /* darkened from #9898ae → ~4.6:1 on light --bg for WCAG AA */
   --accent: #dc2626;
   --accent2: #ef4444;
   --accent-bright: #f43f5e;
@@ -160,17 +160,23 @@ body {
   z-index: 0;
 }
 
-/* Noise texture — premium depth grain */
+/* Noise grain + engineering-grid texture — layered on one pseudo-element so
+   neither clobbers the other (they previously both claimed body::after). */
 :root:not([data-theme="light"]) body::after {
   content: '';
   position: fixed;
   inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.015'/%3E%3C/svg%3E");
-  background-repeat: repeat;
-  background-size: 256px 256px;
+  background-image:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.015'/%3E%3C/svg%3E"),
+    linear-gradient(rgba(255,255,255,0.014) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.014) 1px, transparent 1px);
+  background-repeat: repeat, repeat, repeat;
+  background-size: 256px 256px, 44px 44px, 44px 44px;
+  mask-image: radial-gradient(ellipse 100% 80% at 50% 0%, black 0%, black 40%, transparent 90%);
+  -webkit-mask-image: radial-gradient(ellipse 100% 80% at 50% 0%, black 0%, black 40%, transparent 90%);
   pointer-events: none;
   z-index: 0;
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 /* Light mode — clean subtle warmth */
@@ -2073,24 +2079,11 @@ body {
    (append-only: no class contracts changed)
    ═══════════════════════════════════════════════════════ */
 
-/* Subtle engineering-grid texture over the dark atmosphere */
-:root:not([data-theme="light"]) body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.014) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.014) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 0%, transparent 75%);
-  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 0%, transparent 75%);
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Brand title: gradient ink + glow */
+/* Brand title: animated gradient ink (background-size kept at 200% so the
+   inherited gradientShift animation actually has room to travel). */
 .dash-header h1 {
-  background: linear-gradient(100deg, var(--text) 30%, var(--accent2) 85%);
+  background: linear-gradient(100deg, var(--text) 25%, var(--accent2) 55%, var(--text) 85%);
+  background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -2119,3 +2112,12 @@ body {
 
 /* Footer separation */
 footer { position: relative; z-index: 1; }
+
+/* Tab badge counts: force legible on the active tab's colored gradient
+   (the per-color tokens were near-invisible: red-on-red, gold-on-red…). */
+.tab-btn.active .tab-count { color: rgba(255,255,255,0.9) !important; }
+
+/* Ghost buttons used `opacity: 0.5`, dropping interactive 11px text below any
+   contrast floor. Use a muted token at full opacity instead. */
+.btn-ghost { opacity: 1; color: var(--text2); }
+.btn-ghost:hover { color: var(--text); }

@@ -127,15 +127,25 @@ function createWindow() {
     },
   });
 
+  // Only ever hand http(s) URLs to the OS — never file:, javascript:, ms-*,
+  // etc. (a dropped file or a malicious scraped link could otherwise launch
+  // an arbitrary handler).
+  const openExternalSafely = (url) => {
+    try {
+      const u = new URL(url);
+      if (u.protocol === 'https:' || u.protocol === 'http:') shell.openExternal(url);
+    } catch { /* not a valid URL — ignore */ }
+  };
+
   // External links open in the system browser, not in the app window
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    openExternalSafely(url);
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(baseUrl) && !url.startsWith(DEV_URL)) {
       e.preventDefault();
-      shell.openExternal(url);
+      openExternalSafely(url);
     }
   });
 
@@ -156,11 +166,13 @@ app.whenReady().then(async () => {
       await startServer();
     } else {
       baseUrl = DEV_URL;
-      await waitForServer(`${DEV_URL}/api/data`, 8000).catch(() => {
+      let devUp = true;
+      await waitForServer(`${DEV_URL}/api/data`, 8000).catch(() => { devUp = false; });
+      if (!devUp) {
         dialog.showErrorBox('Dev server not running', 'Run `npm run dev` first, then `npm run electron`.');
         app.quit();
-        return Promise.reject(new Error('no dev server'));
-      });
+        return; // single dialog, no re-throw into the outer catch
+      }
     }
     createWindow();
     maybeAutoScrape();
